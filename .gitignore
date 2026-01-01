@@ -1,0 +1,29 @@
+# Build artifacts
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# Database files (user data)
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Xcode
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.xcuserstate
