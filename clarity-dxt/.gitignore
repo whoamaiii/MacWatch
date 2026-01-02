@@ -1,0 +1,4 @@
+node_modules/
+*.dxt
+*.mcpb
+.DS_Store

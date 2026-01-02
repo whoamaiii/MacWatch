@@ -110,14 +110,14 @@ public extension Date {
 
     /// End of current day
     var endOfDay: Date {
-        Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
+        Calendar.current.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
     }
 
     /// Start of current week
     var startOfWeek: Date {
         let calendar = Calendar.current
         let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: self)
-        return calendar.date(from: components)!
+        return calendar.date(from: components) ?? startOfDay
     }
 
     /// Is this date today?

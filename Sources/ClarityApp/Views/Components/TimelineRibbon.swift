@@ -64,7 +64,10 @@ public struct TimelineRibbon: View {
     private func formatHour(_ hour: Int) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "ha"
-        let date = Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date())!
+        formatter.locale = Locale(identifier: "en_US_POSIX")  // Consistent AM/PM format
+        guard let date = Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date()) else {
+            return "\(hour % 12 == 0 ? 12 : hour % 12)\(hour < 12 ? "am" : "pm")"
+        }
         return formatter.string(from: date).lowercased()
     }
 
@@ -180,7 +183,7 @@ struct SegmentTooltip: View {
     TimelineRibbon(segments: [
         TimelineSegment(
             appName: "VS Code",
-            startTime: Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date())!,
+            startTime: Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date(),
             durationSeconds: 2 * 60 * 60,
             color: ClarityColors.deepFocus,
             keystrokes: 5420,
@@ -188,7 +191,7 @@ struct SegmentTooltip: View {
         ),
         TimelineSegment(
             appName: "Slack",
-            startTime: Calendar.current.date(bySettingHour: 11, minute: 0, second: 0, of: Date())!,
+            startTime: Calendar.current.date(bySettingHour: 11, minute: 0, second: 0, of: Date()) ?? Date(),
             durationSeconds: 30 * 60,
             color: ClarityColors.communication,
             keystrokes: 320,
@@ -196,7 +199,7 @@ struct SegmentTooltip: View {
         ),
         TimelineSegment(
             appName: "Arc",
-            startTime: Calendar.current.date(bySettingHour: 11, minute: 30, second: 0, of: Date())!,
+            startTime: Calendar.current.date(bySettingHour: 11, minute: 30, second: 0, of: Date()) ?? Date(),
             durationSeconds: 45 * 60,
             color: ClarityColors.activeWork,
             keystrokes: 120,

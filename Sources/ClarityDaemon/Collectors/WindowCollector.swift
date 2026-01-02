@@ -6,15 +6,57 @@ import ClarityShared
 final class WindowCollector {
     private let appRepo = AppRepository()
     private let statsRepo = StatsRepository()
+    private let settings = TrackingSettings.shared
 
     private var currentApp: NSRunningApplication?
     private var currentAppId: Int64?
     private var currentWindowTitle: String?
+    private var currentBrowserTabTitle: String?
     private var focusStartTime: Date?
 
     private var observers: [NSObjectProtocol] = []
     private var pollTimer: Timer?
     private var activeSecondTimer: Timer?
+
+    // Context switch tracking
+    private var contextSwitchCount: Int = 0
+    private var lastContextSwitchDate: Date = Date()
+    private var lastAppBundleId: String?
+
+    // Meeting detection
+    private var isInMeeting: Bool = false
+    private var meetingStartTime: Date?
+    private var meetingAppBundleId: String?
+    private var meetingEndGraceTimer: Timer?
+    private static let meetingGracePeriod: TimeInterval = 120 // 2 minutes grace period
+
+    // Meeting app bundle IDs
+    private static let meetingApps: Set<String> = [
+        "us.zoom.xos",
+        "com.microsoft.teams",
+        "com.microsoft.teams2",
+        "com.google.Chrome.app.kjgfgldnnfoeklkmfkjfagphfepbbdan",  // Google Meet in Chrome
+        "com.webex.meetingmanager",
+        "com.cisco.webexmeetingsapp",
+        "com.facetime",
+        "com.apple.FaceTime",
+        "com.slack.Slack",
+        "com.discord.Discord"
+    ]
+
+    // Browser bundle IDs for tab title extraction
+    private static let browserApps: Set<String> = [
+        "com.apple.Safari",
+        "com.google.Chrome",
+        "com.google.Chrome.canary",
+        "org.mozilla.firefox",
+        "org.mozilla.firefoxdeveloperedition",
+        "company.thebrowser.Browser",  // Arc
+        "com.brave.Browser",
+        "com.microsoft.edgemac",
+        "com.operasoftware.Opera",
+        "com.vivaldi.Vivaldi"
+    ]
 
     // MARK: - Lifecycle
 
@@ -89,6 +131,14 @@ final class WindowCollector {
         activeSecondTimer?.invalidate()
         activeSecondTimer = nil
 
+        meetingEndGraceTimer?.invalidate()
+        meetingEndGraceTimer = nil
+
+        // End any active meeting
+        if isInMeeting {
+            endMeeting()
+        }
+
         // Record final session
         if let app = currentApp, let start = focusStartTime {
             recordSession(app: app, start: start, end: Date())
@@ -132,7 +182,17 @@ final class WindowCollector {
     }
 
     private func handleAppQuit(_ notification: Notification) {
-        // Could log quit event if needed
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              let bundleId = app.bundleIdentifier else {
+            return
+        }
+
+        // If the meeting app quit, end the meeting immediately
+        if isInMeeting && meetingAppBundleId == bundleId {
+            meetingEndGraceTimer?.invalidate()
+            meetingEndGraceTimer = nil
+            endMeeting()
+        }
     }
 
     // MARK: - Recording
@@ -142,6 +202,15 @@ final class WindowCollector {
               let name = app.localizedName else {
             return
         }
+
+        // Track context switches (only if switching to a different app)
+        if let lastBundle = lastAppBundleId, lastBundle != bundleId {
+            trackContextSwitch()
+        }
+        lastAppBundleId = bundleId
+
+        // Check for meeting apps
+        checkMeetingStatus(bundleId: bundleId)
 
         currentApp = app
         focusStartTime = Date()
@@ -158,6 +227,109 @@ final class WindowCollector {
         pollWindowTitle()
     }
 
+    private func trackContextSwitch() {
+        // Reset counter if it's a new day
+        let calendar = Calendar.current
+        if !calendar.isDate(lastContextSwitchDate, inSameDayAs: Date()) {
+            contextSwitchCount = 0
+            lastContextSwitchDate = Date()
+        }
+
+        contextSwitchCount += 1
+
+        // Store context switch in raw events
+        do {
+            try DatabaseManager.shared.write { db in
+                let data: [String: Int] = ["count": contextSwitchCount]
+                let jsonData = try JSONEncoder().encode(data)
+                let jsonString = jsonData.base64EncodedString()
+                try db.execute(
+                    sql: "INSERT INTO raw_events (timestamp, eventType, dataJson) VALUES (?, ?, ?)",
+                    arguments: [Date(), "contextSwitch", jsonString]
+                )
+            }
+        } catch {
+            print("Error recording context switch: \(error)")
+        }
+    }
+
+    private func isMeetingApp(_ bundleId: String) -> Bool {
+        Self.meetingApps.contains(bundleId) ||
+        bundleId.lowercased().contains("zoom") ||
+        bundleId.lowercased().contains("teams") ||
+        bundleId.lowercased().contains("meet") ||
+        bundleId.lowercased().contains("webex")
+    }
+
+    private func checkMeetingStatus(bundleId: String) {
+        let isMeeting = isMeetingApp(bundleId)
+
+        if isMeeting && !isInMeeting {
+            // Started a meeting
+            isInMeeting = true
+            meetingStartTime = Date()
+            meetingAppBundleId = bundleId
+            meetingEndGraceTimer?.invalidate()
+            meetingEndGraceTimer = nil
+            print("Meeting started with: \(bundleId)")
+
+            // Record meeting start event
+            do {
+                try DatabaseManager.shared.write { db in
+                    let data: [String: String] = ["app": bundleId, "action": "start"]
+                    let jsonData = try JSONEncoder().encode(data)
+                    let jsonString = jsonData.base64EncodedString()
+                    try db.execute(
+                        sql: "INSERT INTO raw_events (timestamp, eventType, dataJson) VALUES (?, ?, ?)",
+                        arguments: [Date(), "meeting", jsonString]
+                    )
+                }
+            } catch {
+                print("Error recording meeting start: \(error)")
+            }
+        } else if isMeeting && isInMeeting {
+            // User returned to meeting app - cancel grace timer
+            meetingEndGraceTimer?.invalidate()
+            meetingEndGraceTimer = nil
+        } else if !isMeeting && isInMeeting && meetingEndGraceTimer == nil {
+            // Switched away from meeting app - start grace period
+            // Explicitly schedule on main run loop for reliability
+            let timer = Timer(timeInterval: Self.meetingGracePeriod, repeats: false) { [weak self] _ in
+                self?.endMeeting()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            meetingEndGraceTimer = timer
+        }
+    }
+
+    private func endMeeting() {
+        guard isInMeeting, let startTime = meetingStartTime else { return }
+
+        let duration = Date().timeIntervalSince(startTime)
+        print("Meeting ended, duration: \(Int(duration))s")
+
+        // Record meeting end event
+        do {
+            try DatabaseManager.shared.write { db in
+                let data: [String: Any] = ["action": "end", "duration": Int(duration)]
+                let jsonData = try JSONSerialization.data(withJSONObject: data)
+                let jsonString = jsonData.base64EncodedString()
+                try db.execute(
+                    sql: "INSERT INTO raw_events (timestamp, eventType, dataJson) VALUES (?, ?, ?)",
+                    arguments: [Date(), "meeting", jsonString]
+                )
+            }
+        } catch {
+            print("Error recording meeting end: \(error)")
+        }
+
+        isInMeeting = false
+        meetingStartTime = nil
+        meetingAppBundleId = nil
+        meetingEndGraceTimer?.invalidate()
+        meetingEndGraceTimer = nil
+    }
+
     private func recordSession(app: NSRunningApplication, start: Date, end: Date) {
         // Session data could be saved for detailed analysis
         let duration = end.timeIntervalSince(start)
@@ -167,6 +339,7 @@ final class WindowCollector {
     }
 
     private func recordActiveSecond() {
+        guard settings.windowTrackingEnabled else { return }
         guard let appId = currentAppId else { return }
 
         let now = Date()
@@ -186,7 +359,8 @@ final class WindowCollector {
     // MARK: - Window Title Polling
 
     private func pollWindowTitle() {
-        guard let app = currentApp else { return }
+        guard let app = currentApp,
+              let bundleId = app.bundleIdentifier else { return }
 
         let title = getWindowTitle(for: app)
 
@@ -194,6 +368,18 @@ final class WindowCollector {
             currentWindowTitle = title
             if let title = title {
                 print("Window title: \(title)")
+            }
+        }
+
+        // Extract browser tab title if this is a browser
+        if Self.browserApps.contains(bundleId) {
+            let tabTitle = getBrowserTabTitle(bundleId: bundleId)
+            if tabTitle != currentBrowserTabTitle {
+                currentBrowserTabTitle = tabTitle
+                if let tabTitle = tabTitle {
+                    print("Browser tab: \(tabTitle)")
+                    saveBrowserTabEvent(bundleId: bundleId, tabTitle: tabTitle)
+                }
             }
         }
     }
@@ -209,13 +395,18 @@ final class WindowCollector {
             &focusedWindow
         )
 
-        guard result == .success, let window = focusedWindow else {
+        guard result == .success,
+              let window = focusedWindow,
+              CFGetTypeID(window as CFTypeRef) == AXUIElementGetTypeID() else {
             return nil
         }
 
+        // Safe cast after type ID verification - use unsafeBitCast for AXUIElement
+        let axWindow = unsafeBitCast(window, to: AXUIElement.self)
+
         var title: AnyObject?
         let titleResult = AXUIElementCopyAttributeValue(
-            window as! AXUIElement,
+            axWindow,
             kAXTitleAttribute as CFString,
             &title
         )
@@ -225,5 +416,126 @@ final class WindowCollector {
         }
 
         return titleString
+    }
+
+    // MARK: - Browser Tab Title Extraction
+
+    private func getBrowserTabTitle(bundleId: String) -> String? {
+        switch bundleId {
+        case "com.apple.Safari":
+            return getSafariTabTitle()
+        case "com.google.Chrome", "com.google.Chrome.canary", "com.brave.Browser",
+             "com.microsoft.edgemac", "com.operasoftware.Opera", "com.vivaldi.Vivaldi":
+            return getChromiumTabTitle(appName: getChromiumAppName(bundleId: bundleId))
+        case "org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition":
+            return getFirefoxTabTitle()
+        case "company.thebrowser.Browser":
+            return getArcTabTitle()
+        default:
+            return nil
+        }
+    }
+
+    private func getChromiumAppName(bundleId: String) -> String {
+        switch bundleId {
+        case "com.google.Chrome": return "Google Chrome"
+        case "com.google.Chrome.canary": return "Google Chrome Canary"
+        case "com.brave.Browser": return "Brave Browser"
+        case "com.microsoft.edgemac": return "Microsoft Edge"
+        case "com.operasoftware.Opera": return "Opera"
+        case "com.vivaldi.Vivaldi": return "Vivaldi"
+        default: return "Google Chrome"
+        }
+    }
+
+    private func getSafariTabTitle() -> String? {
+        let script = """
+            tell application "Safari"
+                if (count of windows) > 0 then
+                    return name of current tab of front window
+                end if
+            end tell
+        """
+        return runAppleScript(script)
+    }
+
+    private func getChromiumTabTitle(appName: String) -> String? {
+        // Validate app name contains only safe characters (alphanumeric, spaces, basic punctuation)
+        // This prevents AppleScript injection from malicious app names
+        let safeCharacterSet = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " .-_"))
+        guard appName.unicodeScalars.allSatisfy({ safeCharacterSet.contains($0) }) else {
+            print("Warning: Rejecting unsafe app name for AppleScript: \(appName)")
+            return nil
+        }
+
+        // Additional safety checks for null bytes and newlines
+        guard !appName.contains("\0"),
+              !appName.contains("\n"),
+              !appName.contains("\r"),
+              appName.count <= 100 else {  // Reasonable length limit
+            print("Warning: Rejecting app name with invalid characters or excessive length")
+            return nil
+        }
+
+        // Escape quotes in app name as additional safety
+        let escapedName = appName.replacingOccurrences(of: "\\", with: "\\\\")
+                                  .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+            tell application "\(escapedName)"
+                if (count of windows) > 0 then
+                    return title of active tab of front window
+                end if
+            end tell
+        """
+        return runAppleScript(script)
+    }
+
+    private func getFirefoxTabTitle() -> String? {
+        // Firefox doesn't have AppleScript support for tab titles
+        // Fall back to window title which includes the tab title
+        return currentWindowTitle
+    }
+
+    private func getArcTabTitle() -> String? {
+        let script = """
+            tell application "Arc"
+                if (count of windows) > 0 then
+                    return title of active tab of front window
+                end if
+            end tell
+        """
+        return runAppleScript(script)
+    }
+
+    private func runAppleScript(_ source: String) -> String? {
+        guard let script = NSAppleScript(source: source) else { return nil }
+
+        var error: NSDictionary?
+        let result = script.executeAndReturnError(&error)
+
+        if error != nil {
+            return nil
+        }
+
+        return result.stringValue
+    }
+
+    private func saveBrowserTabEvent(bundleId: String, tabTitle: String) {
+        do {
+            try DatabaseManager.shared.write { db in
+                let data: [String: String] = [
+                    "bundleId": bundleId,
+                    "tabTitle": tabTitle
+                ]
+                let jsonData = try JSONEncoder().encode(data)
+                let jsonString = jsonData.base64EncodedString()
+                try db.execute(
+                    sql: "INSERT INTO raw_events (timestamp, eventType, dataJson) VALUES (?, ?, ?)",
+                    arguments: [Date(), "browserTab", jsonString]
+                )
+            }
+        } catch {
+            print("Error saving browser tab event: \(error)")
+        }
     }
 }

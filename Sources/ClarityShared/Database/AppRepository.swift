@@ -11,22 +11,36 @@ public final class AppRepository {
 
     // MARK: - CRUD Operations
 
-    /// Find or create an app by bundle ID
+    /// Find or create an app by bundle ID (handles concurrent inserts safely)
     public func findOrCreate(bundleId: String, name: String) throws -> App {
         try db.write { db in
-            if let existing = try App
-                .filter(App.Columns.bundleId == bundleId)
-                .fetchOne(db) {
+            // First try to find existing
+            let request = App.filter(App.Columns.bundleId == bundleId)
+            if let existing = try request.fetchOne(db) {
                 return existing
             }
 
-            var app = App(
+            // Try to insert - use INSERT OR IGNORE to handle race conditions
+            let app = App(
                 bundleId: bundleId,
                 name: name,
                 category: AppCategory.from(bundleId: bundleId)
             )
-            try app.insert(db)
-            return app
+
+            do {
+                try app.insert(db)
+                if let inserted = try request.fetchOne(db) {
+                    return inserted
+                }
+                return app
+            } catch {
+                // Insert failed (likely unique constraint) - fetch the existing one
+                if let existing = try request.fetchOne(db) {
+                    return existing
+                }
+                // Re-throw if we still can't find it
+                throw error
+            }
         }
     }
 
@@ -55,12 +69,22 @@ public final class AppRepository {
         }
     }
 
-    /// Update app category
+    /// Update app category by ID
     public func updateCategory(appId: Int64, category: AppCategory) throws {
         try db.write { db in
             try db.execute(
                 sql: "UPDATE apps SET category = ? WHERE id = ?",
                 arguments: [category.rawValue, appId]
+            )
+        }
+    }
+
+    /// Update app category by bundle ID
+    public func updateCategory(bundleId: String, category: AppCategory) throws {
+        try db.write { db in
+            try db.execute(
+                sql: "UPDATE apps SET category = ? WHERE bundleId = ?",
+                arguments: [category.rawValue, bundleId]
             )
         }
     }
@@ -81,10 +105,39 @@ public final class AppRepository {
     public func getTopApps(for date: Date, limit: Int = 10) throws -> [AppUsage] {
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: date)
-        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
 
         let startTimestamp = Int64(startOfDay.timeIntervalSince1970)
         let endTimestamp = Int64(endOfDay.timeIntervalSince1970)
+
+        return try db.read { db in
+            let sql = """
+                SELECT
+                    a.id,
+                    a.bundleId,
+                    a.name,
+                    a.category,
+                    SUM(m.activeSeconds) as totalSeconds,
+                    SUM(m.keystrokes) as keystrokes,
+                    SUM(m.clicks) as clicks
+                FROM apps a
+                JOIN minute_stats m ON a.id = m.appId
+                WHERE m.timestamp >= ? AND m.timestamp < ?
+                GROUP BY a.id
+                ORDER BY totalSeconds DESC
+                LIMIT ?
+            """
+
+            return try AppUsage.fetchAll(db, sql: sql, arguments: [
+                startTimestamp, endTimestamp, limit
+            ])
+        }
+    }
+
+    /// Get top apps by usage for a date range
+    public func getTopApps(from startDate: Date, to endDate: Date, limit: Int = 10) throws -> [AppUsage] {
+        let startTimestamp = Int64(startDate.timeIntervalSince1970)
+        let endTimestamp = Int64(endDate.timeIntervalSince1970)
 
         return try db.read { db in
             let sql = """

@@ -1,18 +1,22 @@
 import SwiftUI
 
-/// Glass morphism card container
+/// Glass morphism card container with enhanced visual effects
 public struct GlassCard<Content: View>: View {
     let content: Content
     var padding: CGFloat
+    var enableHover: Bool
 
     @Environment(\.colorScheme) var colorScheme
+    @State private var isHovered = false
 
     public init(
         padding: CGFloat = ClaritySpacing.cardPadding,
+        enableHover: Bool = true,
         @ViewBuilder content: () -> Content
     ) {
         self.content = content()
         self.padding = padding
+        self.enableHover = enableHover
     }
 
     public var body: some View {
@@ -22,25 +26,85 @@ public struct GlassCard<Content: View>: View {
                 RoundedRectangle(cornerRadius: ClarityRadius.lg)
                     .fill(.ultraThinMaterial)
                     .overlay {
+                        // Inner glow on hover
+                        if isHovered {
+                            RoundedRectangle(cornerRadius: ClarityRadius.lg)
+                                .fill(
+                                    RadialGradient(
+                                        colors: [
+                                            ClarityColors.accentPrimary.opacity(0.05),
+                                            .clear
+                                        ],
+                                        center: .center,
+                                        startRadius: 0,
+                                        endRadius: 200
+                                    )
+                                )
+                        }
+                    }
+                    .overlay {
                         RoundedRectangle(cornerRadius: ClarityRadius.lg)
                             .stroke(
                                 LinearGradient(
                                     colors: [
-                                        .white.opacity(colorScheme == .dark ? 0.15 : 0.25),
+                                        .white.opacity(colorScheme == .dark ? (isHovered ? 0.2 : 0.15) : (isHovered ? 0.35 : 0.25)),
                                         .white.opacity(colorScheme == .dark ? 0.05 : 0.1)
                                     ],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ),
-                                lineWidth: 0.5
+                                lineWidth: isHovered ? 1 : 0.5
                             )
                     }
                     .shadow(
-                        color: .black.opacity(colorScheme == .dark ? 0.3 : 0.1),
-                        radius: 10,
-                        y: 4
+                        color: .black.opacity(colorScheme == .dark ? (isHovered ? 0.4 : 0.3) : (isHovered ? 0.15 : 0.1)),
+                        radius: isHovered ? 16 : 10,
+                        y: isHovered ? 6 : 4
                     )
             }
+            .scaleEffect(isHovered && enableHover ? 1.005 : 1.0)
+            .animation(.easeOut(duration: 0.2), value: isHovered)
+            .onHover { hovering in
+                if enableHover {
+                    isHovered = hovering
+                }
+            }
+    }
+}
+
+/// Accent card with colored left border
+public struct AccentCard<Content: View>: View {
+    let content: Content
+    let accentColor: Color
+    var padding: CGFloat
+
+    @Environment(\.colorScheme) var colorScheme
+
+    public init(
+        accentColor: Color = ClarityColors.accentPrimary,
+        padding: CGFloat = ClaritySpacing.cardPadding,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.content = content()
+        self.accentColor = accentColor
+        self.padding = padding
+    }
+
+    public var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(accentColor)
+                .frame(width: 4)
+
+            content
+                .padding(padding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background {
+            RoundedRectangle(cornerRadius: ClarityRadius.md)
+                .fill(accentColor.opacity(0.08))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: ClarityRadius.md))
     }
 }
 

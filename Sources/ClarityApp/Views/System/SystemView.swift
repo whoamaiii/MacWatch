@@ -45,6 +45,33 @@ struct SystemView: View {
                     }
                 }
 
+                // Process metrics (CPU/Memory)
+                GlassCard {
+                    VStack(alignment: .leading, spacing: ClaritySpacing.md) {
+                        HStack {
+                            Text("Process Metrics")
+                                .font(ClarityTypography.title2)
+                                .foregroundColor(ClarityColors.textPrimary)
+
+                            Spacer()
+
+                            Text("Latest snapshot")
+                                .font(ClarityTypography.caption)
+                                .foregroundColor(ClarityColors.textTertiary)
+                        }
+
+                        if viewModel.processMetrics.isEmpty {
+                            Text("No process metrics recorded yet")
+                                .font(ClarityTypography.body)
+                                .foregroundColor(ClarityColors.textTertiary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding()
+                        } else {
+                            processMetricsList
+                        }
+                    }
+                }
+
                 HStack(spacing: ClaritySpacing.md) {
                     // Battery status
                     GlassCard {
@@ -223,6 +250,108 @@ struct SystemView: View {
         }
     }
 
+    // MARK: - Process Metrics List
+
+    private var processMetricsList: some View {
+        VStack(spacing: 0) {
+            // Header row
+            HStack(spacing: ClaritySpacing.md) {
+                Text("App")
+                    .font(ClarityTypography.captionMedium)
+                    .foregroundColor(ClarityColors.textTertiary)
+                    .frame(width: 160, alignment: .leading)
+
+                Text("CPU")
+                    .font(ClarityTypography.captionMedium)
+                    .foregroundColor(ClarityColors.textTertiary)
+                    .frame(width: 80, alignment: .trailing)
+
+                Text("Memory")
+                    .font(ClarityTypography.captionMedium)
+                    .foregroundColor(ClarityColors.textTertiary)
+                    .frame(width: 80, alignment: .trailing)
+
+                Spacer()
+            }
+            .padding(.bottom, ClaritySpacing.xs)
+
+            Divider()
+                .padding(.bottom, ClaritySpacing.xs)
+
+            ForEach(viewModel.processMetrics.prefix(8), id: \.pid) { metric in
+                HStack(spacing: ClaritySpacing.md) {
+                    // App icon and name
+                    HStack(spacing: ClaritySpacing.sm) {
+                        Group {
+                            if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: metric.bundleId) {
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                    .resizable()
+                                    .frame(width: 20, height: 20)
+                                    .cornerRadius(4)
+                            } else {
+                                Image(systemName: "app.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(ClarityColors.textTertiary)
+                                    .frame(width: 20, height: 20)
+                            }
+                        }
+
+                        Text(metric.name)
+                            .font(ClarityTypography.body)
+                            .foregroundColor(ClarityColors.textPrimary)
+                            .lineLimit(1)
+                    }
+                    .frame(width: 160, alignment: .leading)
+
+                    // CPU bar
+                    HStack(spacing: ClaritySpacing.xs) {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(ClarityColors.backgroundSecondary)
+
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(cpuColor(for: metric.cpuPercent))
+                                    .frame(width: geo.size.width * min(metric.cpuPercent / 100, 1.0))
+                            }
+                        }
+                        .frame(width: 40, height: 6)
+
+                        Text(String(format: "%.1f%%", metric.cpuPercent))
+                            .font(ClarityTypography.mono)
+                            .foregroundColor(cpuColor(for: metric.cpuPercent))
+                            .frame(width: 50, alignment: .trailing)
+                    }
+                    .frame(width: 80, alignment: .trailing)
+
+                    // Memory
+                    Text(formatMemory(metric.memoryMB))
+                        .font(ClarityTypography.mono)
+                        .foregroundColor(ClarityColors.textSecondary)
+                        .frame(width: 80, alignment: .trailing)
+
+                    Spacer()
+                }
+                .padding(.vertical, ClaritySpacing.xxs)
+            }
+        }
+    }
+
+    private func cpuColor(for cpu: Double) -> Color {
+        switch cpu {
+        case 0..<25: return ClarityColors.success
+        case 25..<50: return ClarityColors.warning
+        default: return ClarityColors.danger
+        }
+    }
+
+    private func formatMemory(_ mb: Double) -> String {
+        if mb >= 1024 {
+            return String(format: "%.1f GB", mb / 1024)
+        }
+        return String(format: "%.0f MB", mb)
+    }
+
     // MARK: - Battery Status
 
     private var batteryStatus: some View {
@@ -375,6 +504,7 @@ class SystemViewModel: ObservableObject {
     @Published var appsUsed: Int = 0
     @Published var focusScore: Int = 0
     @Published var topApps: [DataService.AppUsageDisplay] = []
+    @Published var sessionStartDate: Date?
 
     // Battery
     @Published var batteryLevel: Int = 100
@@ -387,7 +517,11 @@ class SystemViewModel: ObservableObject {
     @Published var totalTrackedApps: Int = 0
     @Published var totalDataPoints: Int = 0
 
+    // Process metrics
+    @Published var processMetrics: [ProcessMetric] = []
+
     private let dataService = DataService.shared
+    private let db = DatabaseManager.shared
 
     var formattedActiveTime: String {
         let hours = totalActiveSeconds / 3600
@@ -401,7 +535,10 @@ class SystemViewModel: ObservableObject {
     var sessionStart: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "h:mm a"
-        return formatter.string(from: Calendar.current.startOfDay(for: Date()))
+        if let sessionStartDate {
+            return formatter.string(from: sessionStartDate)
+        }
+        return "—"
     }
 
     var systemUptime: String {
@@ -444,24 +581,50 @@ class SystemViewModel: ObservableObject {
     }
 
     func load(period: SystemView.TimePeriod) async {
-        let (startDate, _) = getDateRange(for: period)
+        let (startDate, endDate) = getDateRange(for: period)
 
         // Get stats from data service
-        let stats = await dataService.getStats(for: startDate)
+        let stats = await dataService.getStats(from: startDate, to: endDate)
         totalActiveSeconds = stats.activeTimeSeconds
         totalKeystrokes = stats.keystrokes
         totalClicks = stats.clicks
         focusScore = stats.focusScore
 
         // Get top apps
-        topApps = await dataService.getTopApps(for: startDate, limit: 5)
-        appsUsed = topApps.count
+        topApps = await dataService.getTopApps(from: startDate, to: endDate, limit: 5)
+        appsUsed = await dataService.getUniqueAppCount(from: startDate, to: endDate)
+
+        sessionStartDate = await dataService.getFirstActivityDate(from: startDate, to: endDate)
 
         // Get battery info
         updateBatteryInfo()
 
         // Get database stats
         updateDatabaseStats()
+
+        // Get latest process metrics
+        loadProcessMetrics()
+    }
+
+    private func loadProcessMetrics() {
+        do {
+            // Get the most recent process metrics event using SQL
+            let events: [RawEvent] = try db.read { db in
+                try RawEvent.fetchAll(db, sql: """
+                    SELECT * FROM raw_events
+                    WHERE eventType = ?
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """, arguments: [EventType.processMetrics.rawValue])
+            }
+
+            if let event = events.first,
+               let data = event.decode(ProcessMetricsEventData.self) {
+                processMetrics = data.processes
+            }
+        } catch {
+            // Silently fail - will show empty process list
+        }
     }
 
     private func getDateRange(for period: SystemView.TimePeriod) -> (Date, Date) {
@@ -472,11 +635,11 @@ class SystemViewModel: ObservableObject {
         case .today:
             return (calendar.startOfDay(for: now), now)
         case .week:
-            let weekAgo = calendar.date(byAdding: .day, value: -7, to: now)!
-            return (weekAgo, now)
+            let weekAgo = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+            return (calendar.startOfDay(for: weekAgo), now)
         case .month:
-            let monthAgo = calendar.date(byAdding: .month, value: -1, to: now)!
-            return (monthAgo, now)
+            let monthAgo = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+            return (calendar.startOfDay(for: monthAgo), now)
         }
     }
 
@@ -528,11 +691,8 @@ class SystemViewModel: ObservableObject {
 
         // Estimate data points (minute stats count)
         do {
-            let stats = try StatsRepository().getMinuteStats(
-                from: Calendar.current.date(byAdding: .year, value: -1, to: Date())!,
-                to: Date()
-            )
-            totalDataPoints = stats.count
+            let yearAgo = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
+            totalDataPoints = try StatsRepository().getMinuteStatsCount(from: yearAgo, to: Date())
         } catch {
             totalDataPoints = 0
         }

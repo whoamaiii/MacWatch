@@ -11,6 +11,13 @@ public final class DaemonManager: ObservableObject {
 
     private var daemonProcess: Process?
     private var healthCheckTimer: Timer?
+    private var outputPipe: Pipe?
+    private var errorPipe: Pipe?
+
+    // Auto-restart with exponential backoff
+    private var restartAttempts = 0
+    private let maxRestartAttempts = 5
+    private var lastRestartTime: Date?
 
     private init() {
         // Check initial status
@@ -49,15 +56,31 @@ public final class DaemonManager: ObservableObject {
             process.executableURL = URL(fileURLWithPath: daemonPath)
             process.arguments = []
 
+            // Clean up old pipe handlers before creating new ones
+            cleanupPipes()
+
             // Set up pipes for output
-            let outputPipe = Pipe()
-            let errorPipe = Pipe()
-            process.standardOutput = outputPipe
-            process.standardError = errorPipe
+            let newOutputPipe = Pipe()
+            let newErrorPipe = Pipe()
+            process.standardOutput = newOutputPipe
+            process.standardError = newErrorPipe
+
+            // Store references for cleanup
+            self.outputPipe = newOutputPipe
+            self.errorPipe = newErrorPipe
+
+            // Drain output to avoid blocking if buffers fill
+            newOutputPipe.fileHandleForReading.readabilityHandler = { handle in
+                _ = handle.availableData
+            }
+            newErrorPipe.fileHandleForReading.readabilityHandler = { handle in
+                _ = handle.availableData
+            }
 
             // Handle process termination
             process.terminationHandler = { [weak self] proc in
                 Task { @MainActor in
+                    self?.cleanupPipes()
                     self?.handleDaemonTermination(exitCode: proc.terminationStatus)
                 }
             }
@@ -101,34 +124,36 @@ public final class DaemonManager: ObservableObject {
 
     private func findDaemonExecutable() -> String? {
         // Check common locations in order of preference
+        // Use URL API for proper path handling (handles spaces and special characters)
 
         // 1. Check if running from Xcode - use build directory
-        let buildDir = FileManager.default.currentDirectoryPath + "/.build/debug/ClarityDaemon"
-        if FileManager.default.isExecutableFile(atPath: buildDir) {
-            return buildDir
+        let currentDirURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let buildDirURL = currentDirURL.appendingPathComponent(".build/debug/ClarityDaemon")
+        if FileManager.default.isExecutableFile(atPath: buildDirURL.path) {
+            return buildDirURL.path
         }
 
         // 2. Check relative to the app bundle
-        if let bundlePath = Bundle.main.bundlePath as String? {
-            let appDir = (bundlePath as NSString).deletingLastPathComponent
-            let daemonInAppDir = appDir + "/ClarityDaemon"
-            if FileManager.default.isExecutableFile(atPath: daemonInAppDir) {
-                return daemonInAppDir
-            }
+        let bundleURL = Bundle.main.bundleURL
+        let appDirURL = bundleURL.deletingLastPathComponent()
+        let daemonInAppDirURL = appDirURL.appendingPathComponent("ClarityDaemon")
+        if FileManager.default.isExecutableFile(atPath: daemonInAppDirURL.path) {
+            return daemonInAppDirURL.path
         }
 
         // 3. Check in the same directory as the running binary
-        if let executablePath = Bundle.main.executablePath {
-            let execDir = (executablePath as NSString).deletingLastPathComponent
-            let daemonPath = execDir + "/ClarityDaemon"
-            if FileManager.default.isExecutableFile(atPath: daemonPath) {
-                return daemonPath
+        if let executableURL = Bundle.main.executableURL {
+            let execDirURL = executableURL.deletingLastPathComponent()
+            let daemonURL = execDirURL.appendingPathComponent("ClarityDaemon")
+            if FileManager.default.isExecutableFile(atPath: daemonURL.path) {
+                return daemonURL.path
             }
         }
 
         // 4. Check common development paths
+        let homeURL = URL(fileURLWithPath: NSHomeDirectory())
         let devPaths = [
-            NSHomeDirectory() + "/Desktop/game/clarity/Clarity/.build/debug/ClarityDaemon",
+            homeURL.appendingPathComponent("Desktop/game/clarity/Clarity/.build/debug/ClarityDaemon").path,
             "/usr/local/bin/ClarityDaemon",
             "/opt/clarity/ClarityDaemon"
         ]
@@ -178,6 +203,8 @@ public final class DaemonManager: ObservableObject {
     }
 
     private func startHealthMonitoring() {
+        // Invalidate existing timer to prevent accumulation
+        healthCheckTimer?.invalidate()
         healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkDaemonStatus()
@@ -189,19 +216,51 @@ public final class DaemonManager: ObservableObject {
         daemonProcess = nil
         isRunning = false
 
-        if exitCode != 0 {
-            lastError = "Daemon exited with code \(exitCode)"
-            print("[DaemonManager] \(lastError!)")
+        if exitCode == 0 || exitCode == 15 { // Normal exit or SIGTERM
+            restartAttempts = 0
+            return
+        }
 
-            // Auto-restart after unexpected termination
-            if exitCode != 0 && exitCode != 15 { // 15 = SIGTERM (normal stop)
-                print("[DaemonManager] Attempting auto-restart in 2 seconds...")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    Task { @MainActor in
-                        self.startDaemon()
-                    }
-                }
+        lastError = "Daemon exited with code \(exitCode)"
+        print("[DaemonManager] \(lastError!)")
+
+        // Reset restart counter if enough time has passed (5 minutes)
+        if let lastRestart = lastRestartTime,
+           Date().timeIntervalSince(lastRestart) > 300 {
+            restartAttempts = 0
+        }
+
+        // Check if we should auto-restart
+        guard restartAttempts < maxRestartAttempts else {
+            lastError = "Daemon crashed \(maxRestartAttempts) times. Manual restart required."
+            print("[DaemonManager] \(lastError!)")
+            return
+        }
+
+        // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+        let delay = pow(2.0, Double(restartAttempts + 1))
+        restartAttempts += 1
+        lastRestartTime = Date()
+
+        print("[DaemonManager] Restart attempt \(restartAttempts)/\(maxRestartAttempts) in \(Int(delay)) seconds...")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            Task { @MainActor in
+                self?.startDaemon()
             }
         }
+    }
+
+    /// Reset restart counter (call after successful user-initiated start)
+    public func resetRestartCounter() {
+        restartAttempts = 0
+        lastRestartTime = nil
+    }
+
+    /// Clean up pipe handlers to prevent stale callbacks
+    private func cleanupPipes() {
+        outputPipe?.fileHandleForReading.readabilityHandler = nil
+        errorPipe?.fileHandleForReading.readabilityHandler = nil
+        outputPipe = nil
+        errorPipe = nil
     }
 }

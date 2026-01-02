@@ -1,0 +1,74 @@
+{
+  "manifest_version": "0.3",
+  "name": "clarity-usage-analytics",
+  "version": "1.0.0",
+  "display_name": "Clarity Usage Analytics",
+  "description": "Query macOS usage analytics from the Clarity app - track app usage, focus sessions, and productivity metrics",
+  "long_description": "Clarity Usage Analytics provides Claude with access to your macOS usage data collected by the Clarity app. Query daily statistics, app usage patterns, focus sessions, and productivity metrics to gain insights into how you spend your time on your Mac.\n\n## Features\n- Get daily usage summaries including active time, keystrokes, and clicks\n- Query app usage statistics and see which apps you use most\n- Access focus session data to understand your deep work patterns\n- View hourly breakdowns of your activity\n- Track productivity trends over time",
+  "author": {
+    "name": "Clarity",
+    "url": "https://github.com/quentinthiessen/MacWatch"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/quentinthiessen/MacWatch"
+  },
+  "keywords": [
+    "productivity",
+    "analytics",
+    "usage tracking",
+    "focus",
+    "time tracking",
+    "macos"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"]
+    }
+  },
+  "tools": [
+    {
+      "name": "get_today_summary",
+      "description": "Get today's usage summary including active time, keystrokes, clicks, and focus time"
+    },
+    {
+      "name": "get_daily_stats",
+      "description": "Get daily usage statistics for a specific date or date range"
+    },
+    {
+      "name": "get_top_apps",
+      "description": "Get the most-used apps for a specific date, ranked by active time"
+    },
+    {
+      "name": "get_hourly_breakdown",
+      "description": "Get an hourly breakdown of activity for a specific date"
+    },
+    {
+      "name": "get_focus_sessions",
+      "description": "Get focus/deep work sessions for a specific date"
+    },
+    {
+      "name": "get_app_usage",
+      "description": "Get detailed usage statistics for a specific app"
+    },
+    {
+      "name": "get_weekly_summary",
+      "description": "Get a summary of usage statistics for the past week"
+    },
+    {
+      "name": "get_productivity_trends",
+      "description": "Analyze productivity trends over a specified period"
+    }
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

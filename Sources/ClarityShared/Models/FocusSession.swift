@@ -62,13 +62,13 @@ public struct FocusSession: Codable, Identifiable {
 extension FocusSession: FetchableRecord, PersistableRecord {
     public static var databaseTableName: String { "focus_sessions" }
 
-    enum Columns {
-        static let id = Column(CodingKeys.id)
-        static let startTime = Column(CodingKeys.startTime)
-        static let endTime = Column(CodingKeys.endTime)
-        static let primaryAppId = Column(CodingKeys.primaryAppId)
-        static let keystrokes = Column(CodingKeys.keystrokes)
-        static let clicks = Column(CodingKeys.clicks)
-        static let interruptions = Column(CodingKeys.interruptions)
+    public enum Columns {
+        public static let id = Column(CodingKeys.id)
+        public static let startTime = Column(CodingKeys.startTime)
+        public static let endTime = Column(CodingKeys.endTime)
+        public static let primaryAppId = Column(CodingKeys.primaryAppId)
+        public static let keystrokes = Column(CodingKeys.keystrokes)
+        public static let clicks = Column(CodingKeys.clicks)
+        public static let interruptions = Column(CodingKeys.interruptions)
     }
 }

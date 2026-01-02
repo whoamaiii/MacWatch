@@ -7,6 +7,7 @@ struct TimelineView: View {
     @State private var selectedDate = Date()
     @State private var zoomLevel: ZoomLevel = .day
     @State private var hoveredBlock: ActivityBlock?
+    @State private var hoveredDayIndex: Int?
 
     enum ZoomLevel: String, CaseIterable {
         case day = "Day"
@@ -33,15 +34,22 @@ struct TimelineView: View {
                             .font(ClarityTypography.title2)
                             .foregroundColor(ClarityColors.textPrimary)
 
-                        // Timeline grid
-                        if viewModel.activityBlocks.isEmpty {
-                            Text("No activity recorded for this day")
+                        // Timeline grid based on zoom level
+                        if viewModel.activityBlocks.isEmpty && viewModel.dailyBreakdown.isEmpty {
+                            Text(emptyStateMessage)
                                 .font(ClarityTypography.body)
                                 .foregroundColor(ClarityColors.textTertiary)
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding()
                         } else {
-                            timelineGrid
+                            switch zoomLevel {
+                            case .day:
+                                timelineGrid
+                            case .week:
+                                weekTimelineGrid
+                            case .month:
+                                monthTimelineGrid
+                            }
                         }
                     }
                 }
@@ -65,7 +73,7 @@ struct TimelineView: View {
                     }
                 }
 
-                // Stats for the day
+                // Stats for the period
                 HStack(spacing: ClaritySpacing.md) {
                     StatCard(
                         title: "Active Time",
@@ -100,12 +108,28 @@ struct TimelineView: View {
         }
         .background(ClarityColors.backgroundPrimary)
         .task {
-            await viewModel.load(for: selectedDate)
+            await viewModel.load(for: selectedDate, zoomLevel: zoomLevel)
         }
         .onChange(of: selectedDate) { _, newDate in
             Task {
-                await viewModel.load(for: newDate)
+                await viewModel.load(for: newDate, zoomLevel: zoomLevel)
             }
+        }
+        .onChange(of: zoomLevel) { _, newLevel in
+            Task {
+                await viewModel.load(for: selectedDate, zoomLevel: newLevel)
+            }
+        }
+    }
+
+    private var emptyStateMessage: String {
+        switch zoomLevel {
+        case .day:
+            return "No activity recorded for this day"
+        case .week:
+            return "No activity recorded for this week"
+        case .month:
+            return "No activity recorded for this month"
         }
     }
 
@@ -131,7 +155,7 @@ struct TimelineView: View {
 
     private var dateNavigation: some View {
         HStack {
-            Button(action: { navigateDate(by: -1) }) {
+            Button(action: { navigatePeriod(by: -1) }) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(ClarityColors.textSecondary)
@@ -149,7 +173,7 @@ struct TimelineView: View {
 
             Spacer()
 
-            Button(action: { navigateDate(by: 1) }) {
+            Button(action: { navigatePeriod(by: 1) }) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(ClarityColors.textSecondary)
@@ -158,27 +182,75 @@ struct TimelineView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .disabled(Calendar.current.isDateInToday(selectedDate))
+            .disabled(isAtCurrentPeriod)
         }
         .padding(.horizontal, ClaritySpacing.md)
     }
 
-    private var formattedDate: String {
-        if Calendar.current.isDateInToday(selectedDate) {
-            return "Today"
-        } else if Calendar.current.isDateInYesterday(selectedDate) {
-            return "Yesterday"
-        } else {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "EEEE, MMM d"
-            return formatter.string(from: selectedDate)
+    private var isAtCurrentPeriod: Bool {
+        let calendar = Calendar.current
+        switch zoomLevel {
+        case .day:
+            return calendar.isDateInToday(selectedDate)
+        case .week:
+            return calendar.isDate(selectedDate, equalTo: Date(), toGranularity: .weekOfYear)
+        case .month:
+            return calendar.isDate(selectedDate, equalTo: Date(), toGranularity: .month)
         }
     }
 
-    private func navigateDate(by days: Int) {
-        if let newDate = Calendar.current.date(byAdding: .day, value: days, to: selectedDate) {
+    private var formattedDate: String {
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+
+        switch zoomLevel {
+        case .day:
+            if calendar.isDateInToday(selectedDate) {
+                return "Today"
+            } else if calendar.isDateInYesterday(selectedDate) {
+                return "Yesterday"
+            } else {
+                formatter.dateFormat = "EEEE, MMM d"
+                return formatter.string(from: selectedDate)
+            }
+        case .week:
+            let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate)) ?? selectedDate
+            let weekEnd = calendar.date(byAdding: .day, value: 6, to: weekStart) ?? selectedDate
+
+            if calendar.isDate(selectedDate, equalTo: Date(), toGranularity: .weekOfYear) {
+                return "This Week"
+            } else {
+                formatter.dateFormat = "MMM d"
+                let startStr = formatter.string(from: weekStart)
+                let endStr = formatter.string(from: weekEnd)
+                return "\(startStr) - \(endStr)"
+            }
+        case .month:
+            if calendar.isDate(selectedDate, equalTo: Date(), toGranularity: .month) {
+                return "This Month"
+            } else {
+                formatter.dateFormat = "MMMM yyyy"
+                return formatter.string(from: selectedDate)
+            }
+        }
+    }
+
+    private func navigatePeriod(by offset: Int) {
+        let calendar = Calendar.current
+        var newDate: Date?
+
+        switch zoomLevel {
+        case .day:
+            newDate = calendar.date(byAdding: .day, value: offset, to: selectedDate)
+        case .week:
+            newDate = calendar.date(byAdding: .weekOfYear, value: offset, to: selectedDate)
+        case .month:
+            newDate = calendar.date(byAdding: .month, value: offset, to: selectedDate)
+        }
+
+        if let date = newDate {
             withAnimation(.spring(response: 0.3)) {
-                selectedDate = newDate
+                selectedDate = date
             }
         }
     }
@@ -264,6 +336,163 @@ struct TimelineView: View {
             }
     }
 
+    // MARK: - Week Timeline Grid
+
+    private var weekTimelineGrid: some View {
+        VStack(spacing: ClaritySpacing.sm) {
+            // Day labels
+            HStack(spacing: 0) {
+                ForEach(viewModel.dailyBreakdown) { day in
+                    Text(day.dayLabel)
+                        .font(.system(size: 11))
+                        .foregroundColor(ClarityColors.textTertiary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            // Day bars
+            GeometryReader { geometry in
+                let barWidth = (geometry.size.width - CGFloat(viewModel.dailyBreakdown.count - 1) * 4) / CGFloat(max(viewModel.dailyBreakdown.count, 1))
+                let maxSeconds = viewModel.dailyBreakdown.map { $0.activeSeconds }.max() ?? 1
+
+                HStack(spacing: 4) {
+                    ForEach(Array(viewModel.dailyBreakdown.enumerated()), id: \.element.id) { index, day in
+                        VStack(spacing: 0) {
+                            Spacer()
+
+                            // Stacked category bars
+                            VStack(spacing: 0) {
+                                ForEach(day.categoryBreakdown.reversed()) { category in
+                                    Rectangle()
+                                        .fill(category.color)
+                                        .frame(height: max(0, (CGFloat(category.seconds) / CGFloat(max(maxSeconds, 1))) * (geometry.size.height - 20)))
+                                }
+                            }
+                            .frame(width: barWidth)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .opacity(hoveredDayIndex == index ? 1.0 : 0.85)
+                            .onHover { isHovered in
+                                hoveredDayIndex = isHovered ? index : nil
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(height: 120)
+
+            // Active time labels
+            HStack(spacing: 0) {
+                ForEach(viewModel.dailyBreakdown) { day in
+                    Text(day.formattedDuration)
+                        .font(.system(size: 10))
+                        .foregroundColor(ClarityColors.textTertiary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    // MARK: - Month Timeline Grid
+
+    private var monthTimelineGrid: some View {
+        VStack(spacing: ClaritySpacing.sm) {
+            let calendar = Calendar.current
+            let weeks = groupDaysIntoWeeks(viewModel.dailyBreakdown)
+            let maxSeconds = viewModel.dailyBreakdown.map { $0.activeSeconds }.max() ?? 1
+
+            // Weekday headers
+            HStack(spacing: 2) {
+                ForEach(["S", "M", "T", "W", "T", "F", "S"], id: \.self) { day in
+                    Text(day)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(ClarityColors.textTertiary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            // Calendar grid
+            VStack(spacing: 2) {
+                ForEach(Array(weeks.enumerated()), id: \.offset) { weekIndex, week in
+                    HStack(spacing: 2) {
+                        ForEach(0..<7, id: \.self) { dayIndex in
+                            if let day = week.first(where: { calendar.component(.weekday, from: $0.date) == dayIndex + 1 }) {
+                                let intensity = Double(day.activeSeconds) / Double(max(maxSeconds, 1))
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(activityColor(intensity: intensity))
+                                    .frame(height: 24)
+                                    .overlay {
+                                        Text("\(calendar.component(.day, from: day.date))")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(intensity > 0.5 ? .white : ClarityColors.textTertiary)
+                                    }
+                            } else {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(ClarityColors.backgroundSecondary.opacity(0.3))
+                                    .frame(height: 24)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Legend
+            HStack(spacing: ClaritySpacing.md) {
+                Text("Less")
+                    .font(.system(size: 10))
+                    .foregroundColor(ClarityColors.textTertiary)
+
+                HStack(spacing: 2) {
+                    ForEach([0.0, 0.25, 0.5, 0.75, 1.0], id: \.self) { intensity in
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(activityColor(intensity: intensity))
+                            .frame(width: 12, height: 12)
+                    }
+                }
+
+                Text("More")
+                    .font(.system(size: 10))
+                    .foregroundColor(ClarityColors.textTertiary)
+
+                Spacer()
+            }
+            .padding(.top, ClaritySpacing.xs)
+        }
+    }
+
+    private func activityColor(intensity: Double) -> Color {
+        if intensity == 0 {
+            return ClarityColors.backgroundSecondary
+        }
+        return ClarityColors.accentPrimary.opacity(0.3 + (intensity * 0.7))
+    }
+
+    private func groupDaysIntoWeeks(_ days: [DailyBreakdown]) -> [[DailyBreakdown]] {
+        let calendar = Calendar.current
+        var weeks: [[DailyBreakdown]] = []
+        var currentWeek: [DailyBreakdown] = []
+        var currentWeekOfYear: Int?
+
+        for day in days.sorted(by: { $0.date < $1.date }) {
+            let weekOfYear = calendar.component(.weekOfYear, from: day.date)
+
+            if let current = currentWeekOfYear, current != weekOfYear {
+                if !currentWeek.isEmpty {
+                    weeks.append(currentWeek)
+                }
+                currentWeek = []
+            }
+
+            currentWeek.append(day)
+            currentWeekOfYear = weekOfYear
+        }
+
+        if !currentWeek.isEmpty {
+            weeks.append(currentWeek)
+        }
+
+        return weeks
+    }
+
     // MARK: - Activity Breakdown
 
     private var activityBreakdown: some View {
@@ -339,12 +568,44 @@ struct CategoryBreakdown: Identifiable {
     }
 }
 
+struct DailyBreakdown: Identifiable {
+    let id = UUID()
+    let date: Date
+    let activeSeconds: Int
+    let keystrokes: Int
+    let clicks: Int
+    let categoryBreakdown: [DayCategoryBreakdown]
+
+    var dayLabel: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE"
+        return formatter.string(from: date)
+    }
+
+    var formattedDuration: String {
+        let hours = activeSeconds / 3600
+        let minutes = (activeSeconds % 3600) / 60
+        if hours > 0 {
+            return "\(hours)h"
+        }
+        return "\(minutes)m"
+    }
+}
+
+struct DayCategoryBreakdown: Identifiable {
+    let id = UUID()
+    let category: AppCategory
+    let seconds: Int
+    var color: Color { category.color }
+}
+
 // MARK: - ViewModel
 
 @MainActor
 class TimelineViewModel: ObservableObject {
     @Published var activityBlocks: [ActivityBlock] = []
     @Published var categoryBreakdown: [CategoryBreakdown] = []
+    @Published var dailyBreakdown: [DailyBreakdown] = []
     @Published var totalActiveSeconds: Int = 0
     @Published var totalKeystrokes: Int = 0
     @Published var totalClicks: Int = 0
@@ -362,9 +623,29 @@ class TimelineViewModel: ObservableObject {
         return "\(minutes)m"
     }
 
-    func load(for date: Date) async {
+    func load(for date: Date, zoomLevel: TimelineView.ZoomLevel) async {
         isLoading = true
         defer { isLoading = false }
+
+        let calendar = Calendar.current
+
+        switch zoomLevel {
+        case .day:
+            await loadDayData(for: date)
+        case .week:
+            let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)) ?? date
+            let weekEnd = calendar.date(byAdding: .day, value: 7, to: weekStart) ?? date
+            await loadRangeData(from: weekStart, to: weekEnd, granularity: .day)
+        case .month:
+            let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
+            let monthEnd = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? date
+            await loadRangeData(from: monthStart, to: monthEnd, granularity: .day)
+        }
+    }
+
+    private func loadDayData(for date: Date) async {
+        // Clear multi-day data
+        dailyBreakdown = []
 
         // Get stats for the date
         let stats = await dataService.getStats(for: date)
@@ -388,7 +669,7 @@ class TimelineViewModel: ObservableObject {
                 startHour: startHour,
                 duration: durationHours,
                 appName: segment.appName,
-                category: AppCategory.from(bundleId: segment.bundleId),
+                category: segment.category,
                 keystrokes: segment.keystrokes,
                 clicks: segment.clicks
             )
@@ -397,12 +678,84 @@ class TimelineViewModel: ObservableObject {
         // Calculate category breakdown
         var categoryTotals: [AppCategory: Int] = [:]
         for segment in segments {
-            let category = AppCategory.from(bundleId: segment.bundleId)
-            categoryTotals[category, default: 0] += segment.durationSeconds
+            categoryTotals[segment.category, default: 0] += segment.durationSeconds
         }
 
         let totalSeconds = categoryTotals.values.reduce(0, +)
         categoryBreakdown = categoryTotals.sorted { $0.value > $1.value }.map { category, seconds in
+            CategoryBreakdown(
+                name: category.rawValue.capitalized,
+                durationSeconds: seconds,
+                percentage: totalSeconds > 0 ? Double(seconds) / Double(totalSeconds) : 0,
+                color: category.color
+            )
+        }
+    }
+
+    private func loadRangeData(from startDate: Date, to endDate: Date, granularity: Calendar.Component) async {
+        // Clear single-day data
+        activityBlocks = []
+
+        let calendar = Calendar.current
+
+        // Get overall stats for the range
+        let stats = await dataService.getStats(from: startDate, to: endDate)
+        totalActiveSeconds = stats.activeTimeSeconds
+        totalKeystrokes = stats.keystrokes
+        totalClicks = stats.clicks
+
+        // Get apps used count
+        appsUsed = await dataService.getUniqueAppCount(from: startDate, to: endDate)
+
+        // Build daily breakdown
+        var days: [DailyBreakdown] = []
+        var currentDate = startDate
+
+        while currentDate < endDate {
+            let dayEnd = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
+
+            // Get segments for this day to calculate category breakdown
+            let segments = await dataService.getTimelineSegments(for: currentDate)
+
+            var categoryTotals: [AppCategory: Int] = [:]
+            var dayActive = 0
+            var dayKeystrokes = 0
+            var dayClicks = 0
+
+            for segment in segments {
+                categoryTotals[segment.category, default: 0] += segment.durationSeconds
+                dayActive += segment.durationSeconds
+                dayKeystrokes += segment.keystrokes
+                dayClicks += segment.clicks
+            }
+
+            let dayCategoryBreakdown = categoryTotals.map { category, seconds in
+                DayCategoryBreakdown(category: category, seconds: seconds)
+            }.sorted { $0.seconds > $1.seconds }
+
+            days.append(DailyBreakdown(
+                date: currentDate,
+                activeSeconds: dayActive,
+                keystrokes: dayKeystrokes,
+                clicks: dayClicks,
+                categoryBreakdown: dayCategoryBreakdown
+            ))
+
+            currentDate = dayEnd
+        }
+
+        dailyBreakdown = days
+
+        // Calculate overall category breakdown
+        var overallCategoryTotals: [AppCategory: Int] = [:]
+        for day in days {
+            for cat in day.categoryBreakdown {
+                overallCategoryTotals[cat.category, default: 0] += cat.seconds
+            }
+        }
+
+        let totalSeconds = overallCategoryTotals.values.reduce(0, +)
+        categoryBreakdown = overallCategoryTotals.sorted { $0.value > $1.value }.map { category, seconds in
             CategoryBreakdown(
                 name: category.rawValue.capitalized,
                 durationSeconds: seconds,

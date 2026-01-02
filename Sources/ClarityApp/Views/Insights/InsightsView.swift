@@ -4,6 +4,8 @@ import ClarityShared
 /// Insights view showing patterns and recommendations
 struct InsightsView: View {
     @StateObject private var viewModel = InsightsViewModel()
+    @ObservedObject private var recommendationEngine = RecommendationEngine.shared  // Singleton - use @ObservedObject
+    @ObservedObject private var permissionManager = PermissionManager.shared
 
     var body: some View {
         ScrollView {
@@ -13,6 +15,9 @@ struct InsightsView: View {
 
                 // Stats summary
                 statsSummary
+
+                // Smart Recommendations
+                smartRecommendationsCard
 
                 // Current status
                 GlassCard {
@@ -52,6 +57,26 @@ struct InsightsView: View {
                     }
                 }
 
+                // Productivity Trends
+                GlassCard {
+                    ProductivityTrendsView()
+                }
+
+                // Weekly Report
+                GlassCard {
+                    WeeklyReportView()
+                }
+
+                // Activity Heatmap
+                GlassCard {
+                    ActivityHeatmapSection()
+                }
+
+                // Window Insights
+                GlassCard {
+                    WindowInsights()
+                }
+
                 // Getting started guide
                 GlassCard {
                     VStack(alignment: .leading, spacing: ClaritySpacing.md) {
@@ -87,6 +112,61 @@ struct InsightsView: View {
         .background(ClarityColors.backgroundPrimary)
         .task {
             await viewModel.load()
+            await recommendationEngine.generateRecommendations()
+        }
+    }
+
+    // MARK: - Smart Recommendations
+
+    private var smartRecommendationsCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: ClaritySpacing.md) {
+                HStack {
+                    Image(systemName: "sparkles")
+                        .font(.title2)
+                        .foregroundColor(ClarityColors.warning)
+
+                    Text("Smart Insights")
+                        .font(ClarityTypography.title2)
+                        .foregroundColor(ClarityColors.textPrimary)
+
+                    Spacer()
+
+                    Button {
+                        Task {
+                            await recommendationEngine.generateRecommendations()
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                            .foregroundColor(ClarityColors.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if recommendationEngine.isLoading {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Analyzing your patterns...")
+                            .font(ClarityTypography.caption)
+                            .foregroundColor(ClarityColors.textTertiary)
+                    }
+                    .padding()
+                } else if recommendationEngine.recommendations.isEmpty {
+                    Text("Keep tracking to receive personalized insights")
+                        .font(ClarityTypography.body)
+                        .foregroundColor(ClarityColors.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding()
+                } else {
+                    VStack(spacing: ClaritySpacing.sm) {
+                        ForEach(recommendationEngine.recommendations) { rec in
+                            RecommendationRow(recommendation: rec)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -270,7 +350,7 @@ struct InsightsView: View {
                 number: 2,
                 title: "Grant Permissions",
                 description: "Allow Accessibility access for window and input tracking",
-                isComplete: false
+                isComplete: permissionManager.hasAccessibilityPermission
             )
 
             guideRow(
@@ -362,7 +442,101 @@ class InsightsViewModel: ObservableObject {
         focusScore = stats.focusScore
 
         topApps = await dataService.getTopApps(for: Date(), limit: 5)
-        appsUsed = topApps.count
+        appsUsed = await dataService.getUniqueAppCount(for: Date())
+    }
+}
+
+// MARK: - Recommendation Row
+
+struct RecommendationRow: View {
+    let recommendation: RecommendationEngine.Recommendation
+
+    var body: some View {
+        HStack(alignment: .top, spacing: ClaritySpacing.md) {
+            // Icon with colored background
+            ZStack {
+                Circle()
+                    .fill(recommendation.color.opacity(0.15))
+                    .frame(width: 32, height: 32)
+
+                Image(systemName: recommendation.icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(recommendation.color)
+            }
+
+            VStack(alignment: .leading, spacing: ClaritySpacing.xxs) {
+                Text(recommendation.title)
+                    .font(ClarityTypography.bodyMedium)
+                    .foregroundColor(ClarityColors.textPrimary)
+
+                Text(recommendation.message)
+                    .font(ClarityTypography.caption)
+                    .foregroundColor(ClarityColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+        }
+        .padding(ClaritySpacing.sm)
+        .background(recommendation.color.opacity(0.05))
+        .cornerRadius(ClarityRadius.md)
+    }
+}
+
+// MARK: - Activity Heatmap Section
+
+struct ActivityHeatmapSection: View {
+    @StateObject private var viewModel = CalendarHeatmapViewModel()
+    @State private var selectedMetric: CalendarHeatmap.HeatmapMetric = .activeTime
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ClaritySpacing.md) {
+            HStack {
+                Text("Activity History")
+                    .font(ClarityTypography.title2)
+                    .foregroundColor(ClarityColors.textPrimary)
+
+                Spacer()
+
+                // Metric picker
+                Picker("Metric", selection: $selectedMetric) {
+                    ForEach(CalendarHeatmap.HeatmapMetric.allCases, id: \.self) { metric in
+                        Text(metric.rawValue).tag(metric)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 250)
+            }
+
+            if viewModel.isLoading {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
+                }
+                .padding()
+            } else {
+                CalendarHeatmap(
+                    data: dataForMetric(selectedMetric),
+                    weeks: 12,
+                    metric: selectedMetric
+                )
+            }
+        }
+        .task {
+            await viewModel.load(weeks: 12)
+        }
+    }
+
+    private func dataForMetric(_ metric: CalendarHeatmap.HeatmapMetric) -> [Date: Int] {
+        switch metric {
+        case .activeTime:
+            return viewModel.activeTimeData
+        case .focusScore:
+            return viewModel.focusScoreData
+        case .keystrokes:
+            return viewModel.keystrokesData
+        }
     }
 }
 

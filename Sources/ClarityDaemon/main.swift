@@ -30,6 +30,7 @@ final class ClarityDaemon {
     private let aggregator = Aggregator()
 
     private var isRunning = false
+    private var cleanupTimer: Timer?
 
     func start() {
         guard !isRunning else { return }
@@ -56,27 +57,48 @@ final class ClarityDaemon {
         windowCollector.stop()
         inputCollector.stop()
         systemCollector.stop()
+        aggregator.stop()
+
+        cleanupTimer?.invalidate()
+        cleanupTimer = nil
 
         print("Daemon stopped")
     }
 
     private func scheduleCleanup() {
-        // Run cleanup daily at 3am
-        let timer = Timer(fire: nextCleanupTime(), interval: 24 * 60 * 60, repeats: true) { [weak self] _ in
+        // Run cleanup daily at 3am - reschedule each time to handle DST correctly
+        scheduleNextCleanup()
+    }
+
+    private func scheduleNextCleanup() {
+        cleanupTimer?.invalidate()
+        cleanupTimer = nil
+
+        let fireDate = nextCleanupTime()
+        cleanupTimer = Timer(fire: fireDate, interval: 0, repeats: false) { [weak self] _ in
             self?.performCleanup()
+            // Reschedule for next day after cleanup completes
+            self?.scheduleNextCleanup()
         }
-        RunLoop.current.add(timer, forMode: .common)
+        if let timer = cleanupTimer {
+            RunLoop.current.add(timer, forMode: .common)
+        }
     }
 
     private func nextCleanupTime() -> Date {
         let calendar = Calendar.current
-        var components = calendar.dateComponents([.year, .month, .day], from: Date())
+        let now = Date()
+        var components = calendar.dateComponents([.year, .month, .day], from: now)
         components.hour = 3
         components.minute = 0
 
-        var cleanupTime = calendar.date(from: components)!
-        if cleanupTime < Date() {
-            cleanupTime = calendar.date(byAdding: .day, value: 1, to: cleanupTime)!
+        guard var cleanupTime = calendar.date(from: components) else {
+            // Fallback: run cleanup in 1 hour
+            return now.addingTimeInterval(3600)
+        }
+        if cleanupTime <= now {
+            // Use calendar arithmetic to properly handle DST transitions
+            cleanupTime = calendar.date(byAdding: .day, value: 1, to: cleanupTime) ?? now.addingTimeInterval(86400)
         }
         return cleanupTime
     }
@@ -85,7 +107,8 @@ final class ClarityDaemon {
         print("Running scheduled cleanup...")
         do {
             try DatabaseManager.shared.cleanupOldEvents()
-            try DatabaseManager.shared.cleanupOldMinuteStats()
+            let retentionDays = max(7, TrackingSettings.shared.retentionDays)
+            try DatabaseManager.shared.cleanupOldMinuteStats(retentionDays: retentionDays)
             print("Cleanup complete")
         } catch {
             print("Cleanup error: \(error)")
@@ -99,10 +122,36 @@ final class Aggregator {
     private var minuteTimer: Timer?
 
     func startPeriodicAggregation() {
-        // Aggregate every minute
-        minuteTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        scheduleAlignedTimer()
+    }
+
+    func stop() {
+        minuteTimer?.invalidate()
+        minuteTimer = nil
+    }
+
+    private func scheduleAlignedTimer() {
+        minuteTimer?.invalidate()
+        minuteTimer = nil
+
+        let now = Date()
+        let calendar = Calendar.current
+        let nextMinute = calendar.nextDate(
+            after: now,
+            matching: DateComponents(second: 0),
+            matchingPolicy: .nextTimePreservingSmallerComponents
+        ) ?? now.addingTimeInterval(60)
+
+        let timer = Timer(
+            fire: nextMinute,
+            interval: 60,
+            repeats: true
+        ) { [weak self] _ in
             self?.aggregateLastMinute()
         }
+
+        RunLoop.current.add(timer, forMode: .common)
+        minuteTimer = timer
     }
 
     private func aggregateLastMinute() {
@@ -128,7 +177,9 @@ final class Aggregator {
     }
 
     private func finalizePreviousDay() {
-        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        guard let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date()) else {
+            return
+        }
         do {
             _ = try statsRepo.aggregateDaily(for: yesterday)
             print("Finalized daily stats for \(yesterday)")

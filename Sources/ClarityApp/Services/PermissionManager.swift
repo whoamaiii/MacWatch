@@ -13,7 +13,10 @@ public final class PermissionManager: ObservableObject {
 
     private init() {
         checkPermissions()
-        startPermissionMonitoring()
+        // Only start monitoring if permission not yet granted
+        if !hasAccessibilityPermission {
+            startPermissionMonitoring()
+        }
     }
 
     deinit {
@@ -29,6 +32,12 @@ public final class PermissionManager: ObservableObject {
 
         // Check accessibility permission (required for input and window tracking)
         hasAccessibilityPermission = AXIsProcessTrusted()
+
+        // Stop polling once permission is granted (no need to keep checking)
+        if hasAccessibilityPermission {
+            permissionCheckTimer?.invalidate()
+            permissionCheckTimer = nil
+        }
     }
 
     /// Request accessibility permission (opens System Settings)

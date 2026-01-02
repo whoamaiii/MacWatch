@@ -25,12 +25,20 @@ let package = Package(
         .executableTarget(
             name: "ClarityDaemon",
             dependencies: ["ClarityShared"],
-            path: "Sources/ClarityDaemon"
+            path: "Sources/ClarityDaemon",
+            exclude: [
+                "Info.plist",
+                "ClarityDaemon.entitlements"
+            ]
         ),
         .executableTarget(
             name: "ClarityApp",
             dependencies: ["ClarityShared"],
-            path: "Sources/ClarityApp"
+            path: "Sources/ClarityApp",
+            exclude: [
+                "Info.plist",
+                "ClarityApp.entitlements"
+            ]
         ),
         .testTarget(
             name: "ClarityTests",

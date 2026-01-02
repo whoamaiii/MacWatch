@@ -1,28 +1,62 @@
 import SwiftUI
+import AppKit
 import ClarityShared
 
 // MARK: - Colors
 
 public struct ClarityColors {
-    // Backgrounds
-    public static let backgroundPrimary = Color(hex: "FAFAFA")
-    public static let backgroundSecondary = Color(hex: "F5F5F7")
-    public static let backgroundTertiary = Color.white
+    // Adaptive Backgrounds - automatically switch based on color scheme
+    public static let backgroundPrimary = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0, green: 0, blue: 0, alpha: 1) // Dark: black
+            : NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1) // Light: FAFAFA
+    })
 
-    // Text
-    public static let textPrimary = Color(hex: "1D1D1F")
-    public static let textSecondary = Color(hex: "424245")
-    public static let textTertiary = Color(hex: "86868B")
-    public static let textQuaternary = Color(hex: "AEAEB2")
+    public static let backgroundSecondary = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1) // Dark: 1C1C1E
+            : NSColor(red: 0.96, green: 0.96, blue: 0.97, alpha: 1) // Light: F5F5F7
+    })
 
-    // Accents
+    public static let backgroundTertiary = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0.17, green: 0.17, blue: 0.18, alpha: 1) // Dark: 2C2C2E
+            : NSColor(red: 1, green: 1, blue: 1, alpha: 1) // Light: white
+    })
+
+    // Adaptive Text
+    public static let textPrimary = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 1, green: 1, blue: 1, alpha: 1) // Dark: white
+            : NSColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1) // Light: 1D1D1F
+    })
+
+    public static let textSecondary = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0.92, green: 0.92, blue: 0.92, alpha: 1) // Dark: EBEBEB
+            : NSColor(red: 0.26, green: 0.26, blue: 0.27, alpha: 1) // Light: 424245
+    })
+
+    public static let textTertiary = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0.6, green: 0.6, blue: 0.6, alpha: 1) // Dark: 999999
+            : NSColor(red: 0.53, green: 0.53, blue: 0.55, alpha: 1) // Light: 86868B
+    })
+
+    public static let textQuaternary = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0.4, green: 0.4, blue: 0.42, alpha: 1) // Dark: 66666B
+            : NSColor(red: 0.68, green: 0.68, blue: 0.7, alpha: 1) // Light: AEAEB2
+    })
+
+    // Accents (same in both modes, vibrant colors)
     public static let accentPrimary = Color(hex: "0071E3")
     public static let focusIndigo = Color(hex: "5856D6")
     public static let success = Color(hex: "34C759")
     public static let warning = Color(hex: "FF9500")
     public static let danger = Color(hex: "FF3B30")
 
-    // Data Visualization
+    // Data Visualization (same in both modes)
     public static let deepFocus = Color(hex: "5856D6")
     public static let activeWork = Color(hex: "007AFF")
     public static let communication = Color(hex: "5AC8FA")
@@ -31,11 +65,6 @@ public struct ClarityColors {
     public static let browsing = Color(hex: "FF6B6B")
     public static let music = Color(hex: "1DB954")
     public static let idle = Color(hex: "8E8E93")
-
-    // Dark mode variants
-    public static let darkBackgroundPrimary = Color.black
-    public static let darkBackgroundSecondary = Color(hex: "1C1C1E")
-    public static let darkBackgroundTertiary = Color(hex: "2C2C2E")
 }
 
 // MARK: - Color Hex Extension

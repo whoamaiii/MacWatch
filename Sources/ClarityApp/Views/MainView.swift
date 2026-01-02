@@ -19,6 +19,17 @@ struct MainView: View {
                     DetailView(selection: selectedView)
                 }
                 .navigationSplitViewStyle(.balanced)
+                // Keyboard shortcuts for navigation
+                .keyboardShortcut(for: .today, selection: $selectedView)
+                .keyboardShortcut(for: .weekly, selection: $selectedView)
+                .keyboardShortcut(for: .timeline, selection: $selectedView)
+                .keyboardShortcut(for: .apps, selection: $selectedView)
+                .keyboardShortcut(for: .input, selection: $selectedView)
+                .keyboardShortcut(for: .focus, selection: $selectedView)
+                .keyboardShortcut(for: .achievements, selection: $selectedView)
+                .keyboardShortcut(for: .insights, selection: $selectedView)
+                .keyboardShortcut(for: .system, selection: $selectedView)
+                .keyboardShortcut(for: .settings, selection: $selectedView)
             } else {
                 OnboardingView()
             }
@@ -42,36 +53,61 @@ struct MainView: View {
 
 enum NavigationItem: String, CaseIterable, Identifiable {
     case today = "Today"
+    case weekly = "Weekly"
     case timeline = "Timeline"
     case apps = "Apps"
     case input = "Input"
     case focus = "Focus"
+    case achievements = "Achievements"
     case insights = "Insights"
     case system = "System"
+    case settings = "Settings"
 
     var id: String { rawValue }
+
+    /// Keyboard shortcut key for this navigation item (Cmd+number)
+    var shortcutKey: KeyEquivalent? {
+        switch self {
+        case .today: return "1"
+        case .weekly: return "2"
+        case .timeline: return "3"
+        case .apps: return "4"
+        case .input: return "5"
+        case .focus: return "6"
+        case .achievements: return "7"
+        case .insights: return "8"
+        case .system: return "9"
+        case .settings: return ","  // Standard macOS settings shortcut
+        }
+    }
 
     var icon: String {
         switch self {
         case .today: return ClarityIcons.dashboard
+        case .weekly: return "calendar.badge.clock"
         case .timeline: return ClarityIcons.timeline
         case .apps: return ClarityIcons.apps
         case .input: return ClarityIcons.input
         case .focus: return ClarityIcons.focus
+        case .achievements: return "trophy.fill"
         case .insights: return ClarityIcons.insights
         case .system: return ClarityIcons.system
+        case .settings: return ClarityIcons.settings
         }
     }
 
     var color: Color {
         switch self {
         case .today: return ClarityColors.accentPrimary
+        case .weekly: return ClarityColors.communication
         case .timeline: return ClarityColors.focusIndigo
         case .apps: return ClarityColors.success
         case .input: return ClarityColors.warning
         case .focus: return ClarityColors.deepFocus
+        case .achievements: return ClarityColors.warning
         case .insights: return ClarityColors.entertainment
         case .system: return ClarityColors.textTertiary
+        case .settings: return ClarityColors.textSecondary
         }
     }
 }
@@ -87,7 +123,7 @@ struct Sidebar: View {
             // Navigation items
             List(selection: $selection) {
                 Section {
-                    ForEach(NavigationItem.allCases.prefix(5)) { item in
+                    ForEach(NavigationItem.allCases.prefix(6)) { item in
                         NavigationLink(value: item) {
                             Label(item.rawValue, systemImage: item.icon)
                         }
@@ -95,10 +131,16 @@ struct Sidebar: View {
                 }
 
                 Section {
-                    ForEach(NavigationItem.allCases.suffix(2)) { item in
+                    ForEach([NavigationItem.achievements, NavigationItem.insights, NavigationItem.system]) { item in
                         NavigationLink(value: item) {
                             Label(item.rawValue, systemImage: item.icon)
                         }
+                    }
+                }
+
+                Section {
+                    NavigationLink(value: NavigationItem.settings) {
+                        Label("Settings", systemImage: ClarityIcons.settings)
                     }
                 }
             }
@@ -145,29 +187,58 @@ struct Sidebar: View {
 
 struct DetailView: View {
     let selection: NavigationItem
+    @State private var animationTrigger = false
 
     var body: some View {
-        switch selection {
-        case .today:
-            DashboardView()
-        case .timeline:
-            TimelineDetailView()
-        case .apps:
-            AppsDetailView()
-        case .input:
-            InputDetailView()
-        case .focus:
-            FocusDetailView()
-        case .insights:
-            InsightsDetailView()
-        case .system:
-            SystemDetailView()
+        Group {
+            switch selection {
+            case .today:
+                DashboardView()
+            case .weekly:
+                WeeklyDetailView()
+            case .timeline:
+                TimelineDetailView()
+            case .apps:
+                AppsDetailView()
+            case .input:
+                InputDetailView()
+            case .focus:
+                FocusDetailView()
+            case .achievements:
+                AchievementsDetailView()
+            case .insights:
+                InsightsDetailView()
+            case .system:
+                SystemDetailView()
+            case .settings:
+                SettingsDetailView()
+            }
+        }
+        .opacity(animationTrigger ? 1 : 0)
+        .offset(y: animationTrigger ? 0 : 10)
+        .animation(.easeOut(duration: 0.2), value: animationTrigger)
+        .onChange(of: selection) { _, _ in
+            animationTrigger = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                withAnimation {
+                    animationTrigger = true
+                }
+            }
+        }
+        .onAppear {
+            animationTrigger = true
         }
     }
 }
 
 // MARK: - Detail View Wrappers
 // These wrap the actual views for navigation
+
+struct WeeklyDetailView: View {
+    var body: some View {
+        WeeklySummaryView()
+    }
+}
 
 struct TimelineDetailView: View {
     var body: some View {
@@ -193,6 +264,12 @@ struct FocusDetailView: View {
     }
 }
 
+struct AchievementsDetailView: View {
+    var body: some View {
+        AchievementsView()
+    }
+}
+
 struct InsightsDetailView: View {
     var body: some View {
         InsightsView()
@@ -202,6 +279,29 @@ struct InsightsDetailView: View {
 struct SystemDetailView: View {
     var body: some View {
         SystemView()
+    }
+}
+
+struct SettingsDetailView: View {
+    var body: some View {
+        SettingsView()
+    }
+}
+
+// MARK: - Keyboard Shortcuts Extension
+
+extension View {
+    /// Add a keyboard shortcut for navigating to a specific view
+    func keyboardShortcut(for item: NavigationItem, selection: Binding<NavigationItem>) -> some View {
+        self.background {
+            if let key = item.shortcutKey {
+                Button("") {
+                    selection.wrappedValue = item
+                }
+                .keyboardShortcut(key, modifiers: .command)
+                .hidden()
+            }
+        }
     }
 }
 

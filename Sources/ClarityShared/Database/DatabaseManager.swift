@@ -1,6 +1,18 @@
 import Foundation
 import GRDB
 
+/// Database initialization errors
+public enum DatabaseError: Error, LocalizedError {
+    case applicationSupportNotFound
+
+    public var errorDescription: String? {
+        switch self {
+        case .applicationSupportNotFound:
+            return "Could not locate Application Support directory"
+        }
+    }
+}
+
 /// Singleton database manager for Clarity
 public final class DatabaseManager {
     public static let shared = DatabaseManager()
@@ -16,7 +28,20 @@ public final class DatabaseManager {
         do {
             try setupDatabase()
         } catch {
-            fatalError("Failed to initialize database: \(error)")
+            // Log detailed error before crashing - helps with debugging
+            let errorMessage = """
+            FATAL: Failed to initialize Clarity database.
+            Error: \(error.localizedDescription)
+
+            Possible causes:
+            - Insufficient disk space
+            - Permission denied to ~/Library/Application Support/
+            - Corrupted database file
+
+            Try removing ~/Library/Application Support/Clarity/ and restarting.
+            """
+            print(errorMessage)
+            fatalError(errorMessage)
         }
     }
 
@@ -28,10 +53,12 @@ public final class DatabaseManager {
 
     private func setupDatabase() throws {
         let fileManager = FileManager.default
-        let appSupport = fileManager.urls(
+        guard let appSupport = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        ).first!
+        ).first else {
+            throw DatabaseError.applicationSupportNotFound
+        }
 
         let clarityDir = appSupport.appendingPathComponent("Clarity")
 
@@ -147,6 +174,16 @@ public final class DatabaseManager {
             )
         }
 
+        // Achievement system migration
+        migrator.registerMigration("v2_achievements") { db in
+            try db.create(table: "earned_achievements") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("achievementId", .text).notNull().unique()
+                t.column("earnedAt", .datetime).notNull()
+                t.column("notified", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -177,18 +214,28 @@ public final class DatabaseManager {
 
     /// Clean up old raw events (older than 7 days)
     public func cleanupOldEvents() throws {
-        let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-        try write { db in
+        // Use calendar arithmetic for DST-safe date calculation
+        let calendar = Calendar.current
+        guard let cutoff = calendar.date(byAdding: .day, value: -7, to: Date()) else {
+            return
+        }
+        _ = try write { db in
             try RawEvent
                 .filter(RawEvent.Columns.timestamp < cutoff)
                 .deleteAll(db)
         }
     }
 
-    /// Clean up old minute stats (older than 90 days)
-    public func cleanupOldMinuteStats() throws {
-        let cutoff = Int64(Date().addingTimeInterval(-90 * 24 * 60 * 60).timeIntervalSince1970)
-        try write { db in
+    /// Clean up old minute stats (older than retentionDays)
+    public func cleanupOldMinuteStats(retentionDays: Int = 90) throws {
+        let days = max(1, retentionDays)
+        // Use calendar arithmetic for DST-safe date calculation
+        let calendar = Calendar.current
+        guard let cutoffDate = calendar.date(byAdding: .day, value: -days, to: Date()) else {
+            return
+        }
+        let cutoff = Int64(cutoffDate.timeIntervalSince1970)
+        _ = try write { db in
             try MinuteStat
                 .filter(MinuteStat.Columns.timestamp < cutoff)
                 .deleteAll(db)
@@ -207,5 +254,18 @@ public final class DatabaseManager {
             return 0
         }
         return size
+    }
+
+    /// Clear all data from the database
+    public func clearAllData() throws {
+        try write { db in
+            try db.execute(sql: "DELETE FROM raw_events")
+            try db.execute(sql: "DELETE FROM minute_stats")
+            try db.execute(sql: "DELETE FROM focus_sessions")
+            try db.execute(sql: "DELETE FROM daily_stats")
+            try db.execute(sql: "DELETE FROM earned_achievements")
+            try db.execute(sql: "DELETE FROM apps")
+        }
+        try vacuum()
     }
 }

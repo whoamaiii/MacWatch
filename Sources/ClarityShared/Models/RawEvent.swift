@@ -8,16 +8,30 @@ public struct RawEvent: Codable, Identifiable {
     public var eventType: EventType
     public var dataJson: String
 
+    /// Initialize with data payload (throws if encoding fails)
     public init(
         id: Int64? = nil,
         timestamp: Date = Date(),
         eventType: EventType,
-        data: Codable
+        data: some Encodable
+    ) throws {
+        self.id = id
+        self.timestamp = timestamp
+        self.eventType = eventType
+        self.dataJson = try JSONEncoder().encode(data).base64EncodedString()
+    }
+
+    /// Initialize with pre-encoded JSON (for internal use)
+    public init(
+        id: Int64? = nil,
+        timestamp: Date = Date(),
+        eventType: EventType,
+        dataJson: String
     ) {
         self.id = id
         self.timestamp = timestamp
         self.eventType = eventType
-        self.dataJson = (try? JSONEncoder().encode(data).base64EncodedString()) ?? "{}"
+        self.dataJson = dataJson
     }
 
     /// Decode the data payload
@@ -58,6 +72,12 @@ public enum EventType: String, Codable {
     // Power events
     case batteryLevel
     case chargingStateChange
+
+    // System metrics
+    case processMetrics
+
+    // Browser events
+    case browserTab
 }
 
 // MARK: - Event Data Payloads
@@ -128,15 +148,49 @@ public struct BatteryEventData: Codable {
     }
 }
 
+public struct ProcessMetricsEventData: Codable {
+    public var processes: [ProcessMetric]
+
+    public init(processes: [ProcessMetric]) {
+        self.processes = processes
+    }
+}
+
+public struct ProcessMetric: Codable {
+    public var bundleId: String
+    public var name: String
+    public var pid: Int32
+    public var cpuPercent: Double
+    public var memoryMB: Double
+
+    public init(bundleId: String, name: String, pid: Int32, cpuPercent: Double, memoryMB: Double) {
+        self.bundleId = bundleId
+        self.name = name
+        self.pid = pid
+        self.cpuPercent = cpuPercent
+        self.memoryMB = memoryMB
+    }
+}
+
+public struct BrowserTabEventData: Codable {
+    public var bundleId: String
+    public var tabTitle: String
+
+    public init(bundleId: String, tabTitle: String) {
+        self.bundleId = bundleId
+        self.tabTitle = tabTitle
+    }
+}
+
 // MARK: - GRDB Conformance
 
 extension RawEvent: FetchableRecord, PersistableRecord {
     public static var databaseTableName: String { "raw_events" }
 
-    enum Columns {
-        static let id = Column(CodingKeys.id)
-        static let timestamp = Column(CodingKeys.timestamp)
-        static let eventType = Column(CodingKeys.eventType)
-        static let dataJson = Column(CodingKeys.dataJson)
+    public enum Columns {
+        public static let id = Column(CodingKeys.id)
+        public static let timestamp = Column(CodingKeys.timestamp)
+        public static let eventType = Column(CodingKeys.eventType)
+        public static let dataJson = Column(CodingKeys.dataJson)
     }
 }

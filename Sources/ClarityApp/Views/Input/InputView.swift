@@ -214,6 +214,29 @@ struct InputView: View {
                 }
             }
 
+            // Keyboard Heatmap
+            GlassCard {
+                VStack(alignment: .leading, spacing: ClaritySpacing.md) {
+                    Text("Key Frequency Heatmap")
+                        .font(ClarityTypography.title2)
+                        .foregroundColor(ClarityColors.textPrimary)
+
+                    Text("Visualization of which keys you press most often")
+                        .font(ClarityTypography.caption)
+                        .foregroundColor(ClarityColors.textTertiary)
+
+                    if viewModel.keycodeFrequency.isEmpty && viewModel.totalKeystrokes == 0 {
+                        Text("No keyboard activity recorded yet")
+                            .font(ClarityTypography.body)
+                            .foregroundColor(ClarityColors.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, ClaritySpacing.xl)
+                    } else {
+                        KeyboardHeatmap(keyData: viewModel.keycodeFrequency)
+                    }
+                }
+            }
+
             // Hourly breakdown
             GlassCard {
                 VStack(alignment: .leading, spacing: ClaritySpacing.md) {
@@ -290,6 +313,11 @@ struct InputView: View {
                 }
             }
 
+            // Click Heatmap
+            GlassCard {
+                ClickHeatmapCard(clickPositions: viewModel.clickPositions)
+            }
+
             // Hourly breakdown
             GlassCard {
                 VStack(alignment: .leading, spacing: ClaritySpacing.md) {
@@ -348,21 +376,62 @@ struct InputView: View {
 struct HourlyBarChart: View {
     let data: [Int: Int]  // Hour -> Count
     var color: Color = ClarityColors.accentPrimary
+    var label: String = "activity"
+    var formatter: ((Int) -> String)? = nil
 
-    private let hours = Array(6...23)
+    @State private var hoveredHour: Int? = nil
+
+    private let hours = Array(0...23)
     private var maxValue: Int {
         data.values.max() ?? 1
     }
 
+    private var totalValue: Int {
+        data.values.reduce(0, +)
+    }
+
     var body: some View {
         VStack(spacing: ClaritySpacing.xs) {
+            // Tooltip
+            if let hour = hoveredHour, let value = data[hour], value > 0 {
+                HStack(spacing: ClaritySpacing.sm) {
+                    Text(formatHour(hour))
+                        .font(ClarityTypography.captionMedium)
+                        .foregroundColor(ClarityColors.textSecondary)
+
+                    Text(formatValue(value))
+                        .font(ClarityTypography.mono)
+                        .foregroundColor(ClarityColors.textPrimary)
+
+                    if totalValue > 0 {
+                        Text("(\(Int(Double(value) / Double(totalValue) * 100))%)")
+                            .font(ClarityTypography.caption)
+                            .foregroundColor(ClarityColors.textTertiary)
+                    }
+                }
+                .padding(.horizontal, ClaritySpacing.sm)
+                .padding(.vertical, ClaritySpacing.xxs)
+                .background(ClarityColors.backgroundSecondary)
+                .cornerRadius(ClarityRadius.sm)
+            } else {
+                // Placeholder to maintain layout
+                Text(" ")
+                    .font(ClarityTypography.caption)
+                    .padding(.vertical, ClaritySpacing.xxs)
+            }
+
             HStack(alignment: .bottom, spacing: 4) {
                 ForEach(hours, id: \.self) { hour in
-                    VStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(barColor(for: hour))
-                            .frame(height: barHeight(for: hour))
-                            .frame(maxWidth: .infinity)
+                    HourlyBar(
+                        hour: hour,
+                        value: data[hour] ?? 0,
+                        maxValue: maxValue,
+                        color: color,
+                        isCurrentHour: hour == Calendar.current.component(.hour, from: Date()),
+                        isHovered: hoveredHour == hour
+                    )
+                    .onHover { hovering in
+                        hoveredHour = hovering ? hour : nil
                     }
                 }
             }
@@ -370,8 +439,8 @@ struct HourlyBarChart: View {
 
             HStack(spacing: 4) {
                 ForEach(hours, id: \.self) { hour in
-                    Text(hour % 3 == 0 ? "\(hour)" : "")
-                        .font(.system(size: 10))
+                    Text(hour % 6 == 0 ? formatHourShort(hour) : "")
+                        .font(.system(size: 9))
                         .foregroundColor(ClarityColors.textTertiary)
                         .frame(maxWidth: .infinity)
                 }
@@ -379,22 +448,63 @@ struct HourlyBarChart: View {
         }
     }
 
-    private func barHeight(for hour: Int) -> CGFloat {
-        let value = data[hour] ?? 0
+    private func formatHour(_ hour: Int) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h a"
+        guard let date = Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date()) else {
+            return "\(hour):00"
+        }
+        return formatter.string(from: date)
+    }
+
+    private func formatHourShort(_ hour: Int) -> String {
+        if hour == 0 { return "12a" }
+        if hour < 12 { return "\(hour)a" }
+        if hour == 12 { return "12p" }
+        return "\(hour - 12)p"
+    }
+
+    private func formatValue(_ value: Int) -> String {
+        if let formatter = formatter {
+            return formatter(value)
+        }
+        let numberFormatter = NumberFormatter()
+        numberFormatter.numberStyle = .decimal
+        return numberFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
+    }
+}
+
+private struct HourlyBar: View {
+    let hour: Int
+    let value: Int
+    let maxValue: Int
+    let color: Color
+    let isCurrentHour: Bool
+    let isHovered: Bool
+
+    private var barHeight: CGFloat {
         guard maxValue > 0 else { return 4 }
         let percentage = CGFloat(value) / CGFloat(maxValue)
         return max(4, percentage * 80)
     }
 
-    private func barColor(for hour: Int) -> Color {
-        let value = data[hour] ?? 0
+    private var barColor: Color {
         if value == 0 {
             return ClarityColors.textQuaternary.opacity(0.3)
-        } else if hour == Calendar.current.component(.hour, from: Date()) {
+        } else if isCurrentHour {
             return color
         } else {
             return color.opacity(0.7)
         }
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(barColor)
+            .frame(height: barHeight)
+            .frame(maxWidth: .infinity)
+            .scaleEffect(x: isHovered ? 1.1 : 1.0, y: isHovered ? 1.05 : 1.0, anchor: .bottom)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }
 
@@ -409,6 +519,8 @@ class InputViewModel: ObservableObject {
     @Published var totalActiveSeconds: Int = 0
     @Published var hourlyKeystrokes: [Int: Int] = [:]
     @Published var hourlyClicks: [Int: Int] = [:]
+    @Published var keycodeFrequency: [Int: Int] = [:]
+    @Published var clickPositions: [[Int]] = []
     @Published var isLoading = true
 
     private let dataService = DataService.shared
@@ -435,17 +547,22 @@ class InputViewModel: ObservableObject {
         let (startDate, endDate) = getDateRange(for: period)
 
         // Get stats from data service
-        let stats = await dataService.getStats(for: startDate)
+        let stats = await dataService.getStats(from: startDate, to: endDate)
         totalKeystrokes = stats.keystrokes
         totalClicks = stats.clicks
         totalScrollDistance = stats.scrollDistance
         totalMouseDistance = stats.mouseDistance
         totalActiveSeconds = stats.activeTimeSeconds
 
-        // Get hourly breakdown
-        hourlyKeystrokes = await dataService.getHourlyBreakdown(for: startDate)
-        // For clicks, we'd need a separate method - for now use the same data scaled
-        hourlyClicks = hourlyKeystrokes.mapValues { $0 / 10 } // Approximate
+        // Get hourly breakdowns
+        hourlyKeystrokes = await dataService.getHourlyKeystrokeBreakdown(from: startDate, to: endDate)
+        hourlyClicks = await dataService.getHourlyClickBreakdown(from: startDate, to: endDate)
+
+        // Get keycode frequency for heatmap
+        keycodeFrequency = await dataService.getKeycodeFrequency(from: startDate, to: endDate)
+
+        // Get click positions for heatmap
+        clickPositions = await dataService.getClickPositions(from: startDate, to: endDate)
     }
 
     private func getDateRange(for period: InputView.TimePeriod) -> (Date, Date) {
@@ -456,11 +573,11 @@ class InputViewModel: ObservableObject {
         case .today:
             return (calendar.startOfDay(for: now), now)
         case .week:
-            let weekAgo = calendar.date(byAdding: .day, value: -7, to: now)!
-            return (weekAgo, now)
+            let weekAgo = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+            return (calendar.startOfDay(for: weekAgo), now)
         case .month:
-            let monthAgo = calendar.date(byAdding: .month, value: -1, to: now)!
-            return (monthAgo, now)
+            let monthAgo = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+            return (calendar.startOfDay(for: monthAgo), now)
         }
     }
 }

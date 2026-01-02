@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct ClarityApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @AppStorage("showInMenuBar") private var showInMenuBar = true
 
     var body: some Scene {
         WindowGroup {
@@ -17,14 +18,14 @@ struct ClarityApp: App {
         }
 
         // Menu bar widget
-        MenuBarExtra("Clarity", systemImage: "chart.bar.fill") {
+        MenuBarExtra("Clarity", systemImage: "chart.bar.fill", isInserted: $showInMenuBar) {
             MenuBarView()
         }
         .menuBarExtraStyle(.window)
 
-        // Settings window
+        // Settings window (CMD+,)
         Settings {
-            SettingsView()
+            SettingsWindowView()
         }
     }
 }
@@ -46,74 +47,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// Placeholder settings view
-struct SettingsView: View {
+/// macOS Settings window (CMD+,)
+struct SettingsWindowView: View {
     var body: some View {
-        TabView {
-            GeneralSettingsView()
-                .tabItem {
-                    Label("General", systemImage: "gearshape")
-                }
-
-            TrackingSettingsView()
-                .tabItem {
-                    Label("Tracking", systemImage: "eye")
-                }
-
-            DataSettingsView()
-                .tabItem {
-                    Label("Data", systemImage: "externaldrive")
-                }
-        }
-        .frame(width: 500, height: 400)
-    }
-}
-
-struct GeneralSettingsView: View {
-    @AppStorage("launchAtLogin") private var launchAtLogin = false
-    @AppStorage("showDockIcon") private var showDockIcon = true
-
-    var body: some View {
-        Form {
-            Toggle("Launch at login", isOn: $launchAtLogin)
-            Toggle("Show in Dock", isOn: $showDockIcon)
-        }
-        .padding()
-    }
-}
-
-struct TrackingSettingsView: View {
-    @AppStorage("trackWindows") private var trackWindows = true
-    @AppStorage("trackInput") private var trackInput = true
-    @AppStorage("trackSystem") private var trackSystem = true
-
-    var body: some View {
-        Form {
-            Toggle("Track window focus", isOn: $trackWindows)
-            Toggle("Track keyboard & mouse", isOn: $trackInput)
-            Toggle("Track system events", isOn: $trackSystem)
-        }
-        .padding()
-    }
-}
-
-struct DataSettingsView: View {
-    var body: some View {
-        Form {
-            Section("Storage") {
-                LabeledContent("Database size", value: "12.4 MB")
-                LabeledContent("Location", value: "~/Library/Application Support/Clarity")
-            }
-
-            Section("Export") {
-                Button("Export to JSON...") {}
-                Button("Export to CSV...") {}
-            }
-
-            Section("Danger Zone") {
-                Button("Clear All Data...", role: .destructive) {}
-            }
-        }
-        .padding()
+        SettingsView()
+            .frame(minWidth: 700, minHeight: 600)
     }
 }

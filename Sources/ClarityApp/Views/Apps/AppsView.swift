@@ -8,6 +8,7 @@ struct AppsView: View {
     @State private var sortBy: SortOption = .time
     @State private var selectedApp: DataService.AppUsageDisplay?
     @State private var searchText = ""
+    @State private var selectedCategory: AppCategory? = nil
 
     enum TimePeriod: String, CaseIterable {
         case today = "Today"
@@ -23,7 +24,9 @@ struct AppsView: View {
 
     private var filteredApps: [DataService.AppUsageDisplay] {
         viewModel.apps.filter { app in
-            searchText.isEmpty || app.name.localizedCaseInsensitiveContains(searchText)
+            let matchesSearch = searchText.isEmpty || app.name.localizedCaseInsensitiveContains(searchText)
+            let matchesCategory = selectedCategory == nil || app.category == selectedCategory
+            return matchesSearch && matchesCategory
         }.sorted { a, b in
             switch sortBy {
             case .time: return a.durationSeconds > b.durationSeconds
@@ -212,44 +215,69 @@ struct AppsView: View {
     // MARK: - Category Chart
 
     private var categoryChart: some View {
-        HStack(spacing: ClaritySpacing.lg) {
-            // Pie chart placeholder
-            ZStack {
-                ForEach(Array(viewModel.categoryData.enumerated()), id: \.offset) { index, data in
-                    Circle()
-                        .trim(from: data.startAngle, to: data.endAngle)
-                        .stroke(data.color, lineWidth: 30)
-                        .rotationEffect(.degrees(-90))
+        VStack(spacing: ClaritySpacing.md) {
+            // Filter indicator
+            if let category = selectedCategory {
+                HStack {
+                    Text("Filtered by: \(category.rawValue.capitalized)")
+                        .font(ClarityTypography.caption)
+                        .foregroundColor(ClarityColors.accentPrimary)
+
+                    Button {
+                        withAnimation(.spring(response: 0.3)) {
+                            selectedCategory = nil
+                        }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(ClarityColors.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
                 }
             }
-            .frame(width: 150, height: 150)
 
-            // Legend
-            VStack(alignment: .leading, spacing: ClaritySpacing.sm) {
-                ForEach(viewModel.categoryData, id: \.name) { data in
-                    HStack(spacing: ClaritySpacing.sm) {
-                        Circle()
-                            .fill(data.color)
-                            .frame(width: 10, height: 10)
-
-                        Text(data.name)
-                            .font(ClarityTypography.body)
-                            .foregroundColor(ClarityColors.textPrimary)
-
-                        Spacer()
-
-                        Text(data.duration)
-                            .font(ClarityTypography.mono)
-                            .foregroundColor(ClarityColors.textSecondary)
-
-                        Text("\(Int(data.percentage * 100))%")
-                            .font(ClarityTypography.caption)
-                            .foregroundColor(ClarityColors.textTertiary)
-                            .frame(width: 40, alignment: .trailing)
+            HStack(spacing: ClaritySpacing.lg) {
+                // Interactive pie chart
+                ZStack {
+                    ForEach(Array(viewModel.categoryData.enumerated()), id: \.offset) { index, data in
+                        CategoryPieSlice(
+                            data: data,
+                            isSelected: selectedCategory?.rawValue.capitalized == data.name
+                        )
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                if selectedCategory?.rawValue.capitalized == data.name {
+                                    selectedCategory = nil
+                                } else {
+                                    selectedCategory = AppCategory(rawValue: data.name.lowercased())
+                                }
+                            }
+                        }
                     }
                 }
+                .frame(width: 150, height: 150)
+
+                // Interactive legend
+                VStack(alignment: .leading, spacing: ClaritySpacing.sm) {
+                    ForEach(viewModel.categoryData, id: \.name) { data in
+                        CategoryLegendRow(
+                            data: data,
+                            isSelected: selectedCategory?.rawValue.capitalized == data.name
+                        )
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                if selectedCategory?.rawValue.capitalized == data.name {
+                                    selectedCategory = nil
+                                } else {
+                                    selectedCategory = AppCategory(rawValue: data.name.lowercased())
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
         }
         .padding(.vertical, ClaritySpacing.sm)
     }
@@ -317,6 +345,74 @@ struct AppsView: View {
     }
 }
 
+// MARK: - Category Pie Slice
+
+struct CategoryPieSlice: View {
+    let data: AppsViewModel.CategoryDisplayData
+    let isSelected: Bool
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Circle()
+            .trim(from: data.startAngle, to: data.endAngle)
+            .stroke(
+                data.color,
+                style: StrokeStyle(lineWidth: isSelected || isHovered ? 35 : 30, lineCap: .butt)
+            )
+            .rotationEffect(.degrees(-90))
+            .scaleEffect(isSelected ? 1.05 : 1.0)
+            .opacity(isSelected || isHovered ? 1.0 : 0.85)
+            .animation(.easeOut(duration: 0.2), value: isSelected)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+    }
+}
+
+// MARK: - Category Legend Row
+
+struct CategoryLegendRow: View {
+    let data: AppsViewModel.CategoryDisplayData
+    let isSelected: Bool
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: ClaritySpacing.sm) {
+            Circle()
+                .fill(data.color)
+                .frame(width: isSelected ? 12 : 10, height: isSelected ? 12 : 10)
+
+            Text(data.name)
+                .font(isSelected ? ClarityTypography.bodyMedium : ClarityTypography.body)
+                .foregroundColor(isSelected ? ClarityColors.textPrimary : ClarityColors.textSecondary)
+
+            Spacer()
+
+            Text(data.duration)
+                .font(ClarityTypography.mono)
+                .foregroundColor(isSelected ? ClarityColors.textPrimary : ClarityColors.textSecondary)
+
+            Text("\(Int(data.percentage * 100))%")
+                .font(ClarityTypography.caption)
+                .foregroundColor(ClarityColors.textTertiary)
+                .frame(width: 40, alignment: .trailing)
+        }
+        .padding(.horizontal, ClaritySpacing.xs)
+        .padding(.vertical, ClaritySpacing.xxs)
+        .background(
+            RoundedRectangle(cornerRadius: ClarityRadius.sm)
+                .fill(isSelected ? data.color.opacity(0.15) : (isHovered ? ClarityColors.backgroundSecondary : Color.clear))
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
 // MARK: - App Row Item
 
 struct AppRowItem: View {
@@ -326,30 +422,66 @@ struct AppRowItem: View {
 
     @State private var isHovered = false
 
+    // Determine if app is productive or distracting
+    private var isDistraction: Bool {
+        app.category == .entertainment || app.category == .social || app.category == .gaming
+    }
+
+    private var productivityIndicator: some View {
+        Group {
+            if isDistraction {
+                Image(systemName: "moon.zzz.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(ClarityColors.warning)
+                    .help("Entertainment/Social app")
+            } else if app.category == .development || app.category == .productivity {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(ClarityColors.success)
+                    .help("Productive app")
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                // App icon
-                if let icon = app.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .frame(width: 32, height: 32)
-                        .cornerRadius(8)
-                } else {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(app.category.color.opacity(0.2))
-                        .frame(width: 32, height: 32)
-                        .overlay {
-                            Image(systemName: "app.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(app.category.color)
+                // App icon with productivity badge
+                ZStack(alignment: .bottomTrailing) {
+                    if let icon = app.icon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 32, height: 32)
+                            .cornerRadius(8)
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(app.category.color.opacity(0.2))
+                            .frame(width: 32, height: 32)
+                            .overlay {
+                                Image(systemName: "app.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(app.category.color)
+                            }
+                    }
+
+                    // Productivity indicator badge
+                    if isDistraction || app.category == .development || app.category == .productivity {
+                        ZStack {
+                            Circle()
+                                .fill(Color(nsColor: .windowBackgroundColor))
+                                .frame(width: 14, height: 14)
+                            productivityIndicator
                         }
+                        .offset(x: 4, y: 4)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(app.name)
-                        .font(ClarityTypography.bodyMedium)
-                        .foregroundColor(ClarityColors.textPrimary)
+                    HStack(spacing: ClaritySpacing.xs) {
+                        Text(app.name)
+                            .font(ClarityTypography.bodyMedium)
+                            .foregroundColor(ClarityColors.textPrimary)
+                    }
 
                     Text(app.category.rawValue.capitalized)
                         .font(.system(size: 11))
@@ -433,7 +565,7 @@ class AppsViewModel: ObservableObject {
         let (startDate, endDate) = getDateRange(for: period)
 
         // Get all apps for the date range
-        apps = await dataService.getTopApps(for: startDate, limit: 100)
+        apps = await dataService.getTopApps(from: startDate, to: endDate, limit: 100)
 
         // Calculate category breakdown
         calculateCategoryData()
@@ -447,11 +579,11 @@ class AppsViewModel: ObservableObject {
         case .today:
             return (calendar.startOfDay(for: now), now)
         case .week:
-            let weekAgo = calendar.date(byAdding: .day, value: -7, to: now)!
-            return (weekAgo, now)
+            let weekAgo = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+            return (calendar.startOfDay(for: weekAgo), now)
         case .month:
-            let monthAgo = calendar.date(byAdding: .month, value: -1, to: now)!
-            return (monthAgo, now)
+            let monthAgo = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+            return (calendar.startOfDay(for: monthAgo), now)
         }
     }
 
