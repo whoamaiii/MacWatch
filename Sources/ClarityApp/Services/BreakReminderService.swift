@@ -38,7 +38,13 @@ public final class BreakReminderService: ObservableObject {
 
     private var reminderTimer: Timer?
     private var trackingTimer: Timer?
-    private let notificationCenter = UNUserNotificationCenter.current()
+
+    /// Lazy notification center to avoid crash when running outside of app bundle
+    private var notificationCenter: UNUserNotificationCenter? {
+        // Only works in proper app bundle context
+        guard Bundle.main.bundleIdentifier != nil else { return nil }
+        return UNUserNotificationCenter.current()
+    }
 
     private init() {
         // Load saved settings
@@ -66,7 +72,7 @@ public final class BreakReminderService: ObservableObject {
     // MARK: - Notification Permissions
 
     private func requestNotificationPermissions() {
-        notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+        notificationCenter?.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
                 print("Notification permission error: \(error)")
             }
@@ -91,7 +97,7 @@ public final class BreakReminderService: ObservableObject {
     private func cancelReminders() {
         reminderTimer?.invalidate()
         reminderTimer = nil
-        notificationCenter.removeAllPendingNotificationRequests()
+        notificationCenter?.removeAllPendingNotificationRequests()
     }
 
     private func sendBreakReminder() {
@@ -107,7 +113,7 @@ public final class BreakReminderService: ObservableObject {
             trigger: nil // Deliver immediately
         )
 
-        notificationCenter.add(request)
+        notificationCenter?.add(request)
 
         // Play break reminder sound
         SoundEffectsService.shared.play(.breakReminder)

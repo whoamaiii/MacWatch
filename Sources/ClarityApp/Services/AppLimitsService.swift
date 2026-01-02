@@ -58,8 +58,13 @@ public final class AppLimitsService: ObservableObject {
 
     private let limitsKey = "appUsageLimits"
     private let dataService = DataService.shared
-    private let notificationCenter = UNUserNotificationCenter.current()
     private var monitoringTimer: Timer?
+
+    /// Lazy notification center to avoid crash when running outside of app bundle
+    private var notificationCenter: UNUserNotificationCenter? {
+        guard Bundle.main.bundleIdentifier != nil else { return nil }
+        return UNUserNotificationCenter.current()
+    }
     private var notifiedApps: Set<String> = []
 
     private init() {
@@ -167,7 +172,7 @@ public final class AppLimitsService: ObservableObject {
             trigger: nil
         )
 
-        notificationCenter.add(request)
+        notificationCenter?.add(request)
         SoundEffectsService.shared.play(.breakReminder)
     }
 
@@ -183,7 +188,7 @@ public final class AppLimitsService: ObservableObject {
             trigger: nil
         )
 
-        notificationCenter.add(request)
+        notificationCenter?.add(request)
     }
 
     // MARK: - Persistence

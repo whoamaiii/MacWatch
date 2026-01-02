@@ -251,6 +251,8 @@ public final class FocusScheduleService: ObservableObject {
     }
 
     private func requestNotificationPermission() {
+        // Only request notification permission if running in proper app bundle
+        guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
@@ -281,10 +283,15 @@ public final class FocusScheduleService: ObservableObject {
             trigger: trigger
         )
 
-        UNUserNotificationCenter.current().add(request)
+        // Only add notification if running in proper app bundle
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().add(request)
+        }
     }
 
     private func cancelNotification(for session: ScheduledSession) {
+        // Only remove notification if running in proper app bundle
+        guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().removePendingNotificationRequests(
             withIdentifiers: ["focus-session-\(session.id.uuidString)"]
         )

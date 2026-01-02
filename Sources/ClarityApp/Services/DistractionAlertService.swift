@@ -31,8 +31,13 @@ public final class DistractionAlertService: ObservableObject {
 
     private var monitoringTimer: Timer?
     private var lastAlertTime: Date?
-    private let notificationCenter = UNUserNotificationCenter.current()
     private let dataService = DataService.shared
+
+    /// Lazy notification center to avoid crash when running outside of app bundle
+    private var notificationCenter: UNUserNotificationCenter? {
+        guard Bundle.main.bundleIdentifier != nil else { return nil }
+        return UNUserNotificationCenter.current()
+    }
 
     // Categories considered distracting
     private let distractingCategories: Set<AppCategory> = [
@@ -133,7 +138,7 @@ public final class DistractionAlertService: ObservableObject {
         )
 
         do {
-            try await notificationCenter.add(request)
+            try await notificationCenter?.add(request)
         } catch {
             print("Failed to send distraction alert: \(error)")
         }

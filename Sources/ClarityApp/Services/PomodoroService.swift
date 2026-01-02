@@ -266,10 +266,15 @@ public final class PomodoroService: ObservableObject {
             trigger: nil
         )
 
-        UNUserNotificationCenter.current().add(request)
+        // Only add notification if running in proper app bundle
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().add(request)
+        }
     }
 
     private func requestNotificationPermission() {
+        // Only request notification permission if running in proper app bundle
+        guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
